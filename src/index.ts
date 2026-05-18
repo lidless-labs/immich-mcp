@@ -13,6 +13,7 @@ import { registerActivityTools } from "./tools/activities.js";
 import { registerMemoryTools } from "./tools/memories.js";
 import { registerDuplicateTools } from "./tools/duplicates.js";
 import { registerStackTools } from "./tools/stacks.js";
+import { registerDuplicateFlowTools } from "./tools/duplicate-flows.js";
 
 async function main(): Promise<void> {
   const config = getConfig();
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
   registerMemoryTools(server, config);
   registerDuplicateTools(server, config);
   registerStackTools(server, config);
+  registerDuplicateFlowTools(server, config);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
