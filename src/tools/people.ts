@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as sdk from "@immich/sdk";
 import type { Config } from "../config.js";
 import { Uuid } from "../types.js";
+import { withRetry } from "../retry.js";
 import { asMcpResponse, asMcpError, surfaceError, requireWrites, requireConfirm } from "./_util.js";
 
 export function registerPeopleTools(server: McpServer, config: Config): void {
@@ -70,4 +71,32 @@ export function registerPeopleTools(server: McpServer, config: Config): void {
       return asMcpResponse(await sdk.mergePerson({ id, mergePersonDto: { ids } as never }));
     } catch (e) { return asMcpError(surfaceError(e)); }
   });
+
+  server.tool(
+    "immich_suggest_face_names",
+    "Surface the top N unnamed recognized people sorted by face count desc, with a sample asset id for visual identification prompts.",
+    {
+      limit: z.number().int().min(1).max(50).optional(),
+      includeHidden: z.boolean().optional(),
+    },
+    async ({ limit, includeHidden }) => {
+      try {
+        const cap = limit ?? 10;
+        const raw = await withRetry("getAllPeople", () =>
+          sdk.getAllPeople({ withHidden: includeHidden ?? false, size: 1000 }),
+        );
+        const people = (raw as unknown as { people?: Array<{ id: string; name?: string; isHidden?: boolean; faceCount?: number; thumbnailPath?: string }> }).people ?? [];
+        const unnamed = people
+          .filter((p) => !p.name || p.name.trim() === "")
+          .sort((a, b) => (b.faceCount ?? 0) - (a.faceCount ?? 0))
+          .slice(0, cap)
+          .map((p) => ({
+            personId: p.id,
+            faceCount: p.faceCount ?? 0,
+            thumbnailPath: p.thumbnailPath,
+          }));
+        return asMcpResponse({ totalUnnamedReturned: unnamed.length, people: unnamed });
+      } catch (e) { return asMcpError(surfaceError(e)); }
+    },
+  );
 }

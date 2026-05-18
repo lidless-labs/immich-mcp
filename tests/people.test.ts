@@ -78,3 +78,50 @@ describe("people tools - gates", () => {
     expect(sdkCalls[0]?.fn).toBe("mergePerson");
   });
 });
+
+describe("people tools - immich_suggest_face_names", () => {
+  it("returns top N unnamed sorted by faceCount desc, excludes named", async () => {
+    resetFakeSdk();
+    mockSdkResponse("getAllPeople", {
+      people: [
+        { id: "p1", name: "Mom", faceCount: 500, thumbnailPath: "/p1.jpg" },
+        { id: "p2", name: "", faceCount: 120, thumbnailPath: "/p2.jpg" },
+        { id: "p3", faceCount: 80, thumbnailPath: "/p3.jpg" },
+        { id: "p4", name: "  ", faceCount: 200, thumbnailPath: "/p4.jpg" },
+        { id: "p5", name: "Dad", faceCount: 1000, thumbnailPath: "/p5.jpg" },
+      ],
+    });
+    const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+    registerPeopleTools(server, cfgRead);
+    const out = await callTool(server, "immich_suggest_face_names") as { content: { text: string }[] };
+    const body = JSON.parse(out.content[0]!.text) as {
+      totalUnnamedReturned: number;
+      people: Array<{ personId: string; faceCount: number; thumbnailPath?: string }>;
+    };
+    expect(body.totalUnnamedReturned).toBe(3);
+    expect(body.people.map((p) => p.personId)).toEqual(["p4", "p2", "p3"]);
+    expect(body.people[0]!.faceCount).toBe(200);
+    expect(body.people.find((p) => p.personId === "p1")).toBeUndefined();
+    expect(body.people.find((p) => p.personId === "p5")).toBeUndefined();
+  });
+
+  it("returns at most `limit` entries", async () => {
+    resetFakeSdk();
+    const people = Array.from({ length: 20 }, (_, i) => ({
+      id: `u${i}`,
+      name: "",
+      faceCount: 100 - i,
+    }));
+    mockSdkResponse("getAllPeople", { people });
+    const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+    registerPeopleTools(server, cfgRead);
+    const out = await callTool(server, "immich_suggest_face_names", { limit: 5 }) as { content: { text: string }[] };
+    const body = JSON.parse(out.content[0]!.text) as {
+      totalUnnamedReturned: number;
+      people: Array<{ personId: string }>;
+    };
+    expect(body.totalUnnamedReturned).toBe(5);
+    expect(body.people).toHaveLength(5);
+    expect(body.people.map((p) => p.personId)).toEqual(["u0", "u1", "u2", "u3", "u4"]);
+  });
+});

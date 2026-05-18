@@ -15,6 +15,7 @@ import { registerDuplicateTools } from "./tools/duplicates.js";
 import { registerStackTools } from "./tools/stacks.js";
 import { registerDuplicateFlowTools } from "./tools/duplicate-flows.js";
 import { registerMemoryFlowTools } from "./tools/memory-flows.js";
+import { registerAlbumFlowTools } from "./tools/album-flows.js";
 
 async function main(): Promise<void> {
   const config = getConfig();
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
   registerStackTools(server, config);
   registerDuplicateFlowTools(server, config);
   registerMemoryFlowTools(server, config);
+  registerAlbumFlowTools(server, config);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
