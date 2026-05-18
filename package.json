@@ -1,0 +1,55 @@
+{
+  "name": "immich-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Immich — browse and search photos, manage albums, recognize people, surface memories, resolve duplicates, manage stacks via LLM tool calls",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "immich-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm test && npm run build"
+  },
+  "author": "Solomon Neas <me@solomonneas.dev>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solomonneas/immich-mcp.git"
+  },
+  "homepage": "https://github.com/solomonneas/immich-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/solomonneas/immich-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "immich",
+    "photos",
+    "model-context-protocol",
+    "llm-tools",
+    "claude",
+    "home-media"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "dependencies": {
+    "@immich/sdk": "^2.7.5",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.0.0"
+  }
+}
