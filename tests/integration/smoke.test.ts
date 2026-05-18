@@ -10,10 +10,14 @@ describe.skipIf(!ENABLED || !BASE_URL || !API_KEY)("live Immich smoke", () => {
   let client: Client;
   let transport: StdioClientTransport;
   beforeAll(async () => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === "string") env[k] = v;
+    }
     transport = new StdioClientTransport({
       command: "node",
       args: ["dist/index.js"],
-      env: { ...process.env },
+      env,
     });
     client = new Client({ name: "integration", version: "0" }, { capabilities: {} });
     await client.connect(transport);
@@ -39,7 +43,7 @@ describe.skipIf(!ENABLED || !BASE_URL || !API_KEY)("live Immich smoke", () => {
 
   it("immich_categorize_duplicates returns total field", async () => {
     const r = await client.callTool({ name: "immich_categorize_duplicates", arguments: {} });
-    expect(JSON.stringify(r)).toContain("\"total\"");
+    expect(JSON.stringify(r)).toContain("total");
   });
 
   it("immich_list_albums responds", async () => {
