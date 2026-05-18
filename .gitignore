@@ -6,3 +6,5 @@ dist/
 .claude/
 .DS_Store
 coverage/
+docs/superpowers/
+*.tgz
