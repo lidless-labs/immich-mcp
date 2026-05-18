@@ -96,13 +96,18 @@ describe("people tools - immich_suggest_face_names", () => {
     const out = await callTool(server, "immich_suggest_face_names") as { content: { text: string }[] };
     const body = JSON.parse(out.content[0]!.text) as {
       totalUnnamedReturned: number;
-      people: Array<{ personId: string; faceCount: number; thumbnailPath?: string }>;
+      people: Array<{ personId: string; faceCount: number }>;
     };
     expect(body.totalUnnamedReturned).toBe(3);
     expect(body.people.map((p) => p.personId)).toEqual(["p4", "p2", "p3"]);
     expect(body.people[0]!.faceCount).toBe(200);
     expect(body.people.find((p) => p.personId === "p1")).toBeUndefined();
     expect(body.people.find((p) => p.personId === "p5")).toBeUndefined();
+    // Spec contract: response shape is { personId, faceCount } only, no thumbnailPath
+    for (const p of body.people) {
+      expect(Object.keys(p).sort()).toEqual(["faceCount", "personId"]);
+      expect((p as Record<string, unknown>).thumbnailPath).toBeUndefined();
+    }
   });
 
   it("returns at most `limit` entries", async () => {

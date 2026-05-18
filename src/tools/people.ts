@@ -74,7 +74,7 @@ export function registerPeopleTools(server: McpServer, config: Config): void {
 
   server.tool(
     "immich_suggest_face_names",
-    "Surface the top N unnamed recognized people sorted by face count desc, with a sample asset id for visual identification prompts.",
+    "Surface top N unnamed people sorted by faceCount desc. Pair with immich_get_person_assets to fetch sample assets per person.",
     {
       limit: z.number().int().min(1).max(50).optional(),
       includeHidden: z.boolean().optional(),
@@ -85,7 +85,7 @@ export function registerPeopleTools(server: McpServer, config: Config): void {
         const raw = await withRetry("getAllPeople", () =>
           sdk.getAllPeople({ withHidden: includeHidden ?? false, size: 1000 }),
         );
-        const people = (raw as unknown as { people?: Array<{ id: string; name?: string; isHidden?: boolean; faceCount?: number; thumbnailPath?: string }> }).people ?? [];
+        const people = (raw as unknown as { people?: Array<{ id: string; name?: string; isHidden?: boolean; faceCount?: number }> }).people ?? [];
         const unnamed = people
           .filter((p) => !p.name || p.name.trim() === "")
           .sort((a, b) => (b.faceCount ?? 0) - (a.faceCount ?? 0))
@@ -93,7 +93,6 @@ export function registerPeopleTools(server: McpServer, config: Config): void {
           .map((p) => ({
             personId: p.id,
             faceCount: p.faceCount ?? 0,
-            thumbnailPath: p.thumbnailPath,
           }));
         return asMcpResponse({ totalUnnamedReturned: unnamed.length, people: unnamed });
       } catch (e) { return asMcpError(surfaceError(e)); }
