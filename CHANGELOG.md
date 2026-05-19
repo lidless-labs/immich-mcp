@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file. Format foll
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-18
+
+### Changed (behavior change)
+- **Default dedup match changed from `(filename, fileSizeInByte)` to SHA1 checksum.** v0.3-v0.4.1 labeled their matching as "byte-exact" but used filename+size only. Real example found 2026-05-18: three videos with identical filename, size, and timestamp but three distinct SHA1 checksums. The v0.4.2 default `matchMode: "checksum"` provides true byte-identity. Weaker `matchMode: "name-size"` is still selectable as an opt-in heuristic.
+- `matchReason` enum: `byte-exact` removed. Replaced by `checksum-exact` (when assets share SHA1) and `name-size-match` (when same filename+size only).
+
+### Added
+- `matchMode` input on `immich_find_byte_dupes` and `immich_resolve_with_keep_strategy`. Default `"checksum"`.
+- New tool `immich_audit_trash` - cross-checks every trashed asset against active library by checksum (or name+size); reports orphans (potentially-unique content) so you can spot risk before permanent deletion. Supports `exportTo` for full CSV manifest.
+
 ## [0.4.1] - 2026-05-18
 
 ### Fixed
