@@ -630,4 +630,136 @@ describe("duplicate-flows", () => {
       expect(sdkCalls.some((c) => c.fn === "getAlbumInfo")).toBe(false);
     });
   });
+
+  describe("immich_explain_duplicate_group", () => {
+    const validId = "11111111-1111-4111-8111-111111111111";
+    const otherId = "22222222-2222-4222-8222-222222222222";
+
+    it("returns a clear error when the duplicateId is not found", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: otherId,
+          assets: [
+            mkAsset("a1", "a.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a2", "a.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      }) as ToolResult;
+      expect(out.isError).toBe(true);
+      expect(out.content[0]!.text).toContain(validId);
+      expect(out.content[0]!.text).toMatch(/not found/i);
+    });
+
+    it("with one in-album asset, recommendation.keeperId is that asset and rationale mentions albums", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", [{ id: "alb-1", albumName: "Vacation" }]);
+      mockSdkResponse("getAlbumInfo", {
+        albumName: "Vacation",
+        assets: [{ id: "a2" }],
+      });
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            mkAsset("a1", "p.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a2", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+            mkAsset("a3", "p.jpg", 500, "2024-12-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      expect(body.total).toBe(3);
+      const rec = body.recommendation as { keeperId: string; rationale: string };
+      expect(rec.keeperId).toBe("a2");
+      expect(rec.rationale).toMatch(/album/i);
+    });
+
+    it("with multiple in-album assets, recommendation is null", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", [{ id: "alb-1", albumName: "A" }]);
+      // Mocked single album returns BOTH a1 and a2 -> two in-album bucket members.
+      mockSdkResponse("getAlbumInfo", {
+        albumName: "A",
+        assets: [{ id: "a1" }, { id: "a2" }],
+      });
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            mkAsset("a1", "p.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a2", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+            mkAsset("a3", "p.jpg", 500, "2024-12-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      expect(body.recommendation).toBeNull();
+    });
+
+    it("with no albums but favorites, recommendation prefers favorite", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            { ...mkAsset("a1", "p.jpg", 500, "2024-01-01T00:00:00Z"), isFavorite: false },
+            { ...mkAsset("a2", "p.jpg", 500, "2024-06-01T00:00:00Z"), isFavorite: true },
+            { ...mkAsset("a3", "p.jpg", 500, "2024-12-01T00:00:00Z"), isFavorite: false },
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      const rec = body.recommendation as { keeperId: string; rationale: string };
+      expect(rec.keeperId).toBe("a2");
+      expect(rec.rationale).toMatch(/favorite/i);
+    });
+
+    it("with no signals, recommendation falls back to oldest", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            mkAsset("a1", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+            mkAsset("a2", "p.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a3", "p.jpg", 500, "2024-12-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      const rec = body.recommendation as { keeperId: string; rationale: string };
+      // Oldest fileCreatedAt is a2 (2024-01-01).
+      expect(rec.keeperId).toBe("a2");
+      expect(rec.rationale).toMatch(/oldest/i);
+    });
+  });
 });

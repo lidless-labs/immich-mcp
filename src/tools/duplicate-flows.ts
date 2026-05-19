@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as sdk from "@immich/sdk";
 import type { Config } from "../config.js";
+import { Uuid } from "../types.js";
+import { withRetry } from "../retry.js";
 import {
   asMcpResponse,
   asMcpError,
@@ -464,6 +466,67 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
           flaggedCount: flagged.length,
           ...(exportPath ? { exportPath, exportRowCount } : {}),
           restoreNote: RESTORE_NOTE,
+        });
+      } catch (e) {
+        return asMcpError(surfaceError(e));
+      }
+    },
+  );
+
+  server.tool(
+    "immich_explain_duplicate_group",
+    "Drill into one duplicate group: per-asset metadata, album memberships, recommended keeper with rationale. Use to investigate before bulk action.",
+    {
+      duplicateId: Uuid,
+      webBaseUrl: z.string().url().optional(),
+    },
+    async ({ duplicateId, webBaseUrl }) => {
+      try {
+        const raw = await withRetry("getAssetDuplicates", () => sdk.getAssetDuplicates());
+        const groups = raw as unknown as DupGroup[];
+        const target = groups.find((g) => g.duplicateId === duplicateId);
+        if (!target) {
+          return asMcpError(`Duplicate group ${duplicateId} not found.`);
+        }
+        const albumIndex = await buildAssetAlbumIndex();
+        const enriched = target.assets.map((a) => {
+          const ref = enrichAsset(a, albumIndex, webBaseUrl);
+          const meta = a as unknown as { isFavorite?: boolean; isArchived?: boolean; rating?: number };
+          return {
+            ...ref,
+            isFavorite: meta.isFavorite ?? false,
+            isArchived: meta.isArchived ?? false,
+            rating: meta.rating ?? null,
+          };
+        });
+        const matchReason = categorize(target);
+        // Recommendation: prefer in-album, then favorite, then highest rating, then oldest.
+        const sorted = [...enriched].sort((a, b) => {
+          const aScore = (a.albumIds.length ? 100 : 0) + (a.isFavorite ? 10 : 0) + (a.rating ?? 0);
+          const bScore = (b.albumIds.length ? 100 : 0) + (b.isFavorite ? 10 : 0) + (b.rating ?? 0);
+          if (aScore !== bScore) return bScore - aScore;
+          return (a.fileCreatedAt ?? "").localeCompare(b.fileCreatedAt ?? "");
+        });
+        // Recommendation null when 2+ assets are in albums (split curation; no single dominant keeper).
+        const albumCount = enriched.filter((a) => a.albumIds.length > 0).length;
+        const top = sorted[0]!;
+        const recommendation = albumCount > 1
+          ? null
+          : {
+              keeperId: top.id,
+              rationale: [
+                top.albumIds.length ? `in ${top.albumIds.length} album(s)` : null,
+                top.isFavorite ? "favorite" : null,
+                top.rating ? `rating ${top.rating}` : null,
+                "oldest",
+              ].filter(Boolean).join(" + "),
+            };
+        return asMcpResponse({
+          duplicateId,
+          total: enriched.length,
+          matchReason,
+          assets: enriched,
+          recommendation,
         });
       } catch (e) {
         return asMcpError(surfaceError(e));
