@@ -65,6 +65,92 @@ function pickKeeper(bucket: DupAsset[], strategy: "oldest" | "largest"): DupAsse
   return sorted[0]!;
 }
 
+// Bucket detail shape used by both find_byte_dupes and resolve_with_keep_strategy.
+export type EnrichedAssetRef = {
+  id: string;
+  filename: string;
+  size: number;
+  fileCreatedAt: string | undefined;
+  albumIds: string[];
+  albumNames: string[];
+  webUrl?: string;
+};
+export type EnrichedBucket = {
+  duplicateId: string;
+  filename: string;
+  size: number;
+  reclaimableBytes: number;
+  matchReason: "byte-exact" | "perceptual-clip" | "resolution-variants" | "burst-sequence" | "edits";
+  keeper: EnrichedAssetRef;
+  discards: EnrichedAssetRef[];
+  flagged?: { reason: string };
+};
+
+// Album lookup: returns Map<assetId, Array<{ id, name }>>.
+export async function buildAssetAlbumIndex(): Promise<Map<string, { id: string; name: string }[]>> {
+  const map = new Map<string, { id: string; name: string }[]>();
+  try {
+    const albums = (await sdk.getAllAlbums({})) as unknown as Array<{ id: string; albumName: string }>;
+    for (const album of albums) {
+      try {
+        const detail = (await sdk.getAlbumInfo({ id: album.id })) as unknown as {
+          albumName?: string;
+          assets?: Array<{ id: string }>;
+        };
+        const name = detail.albumName ?? album.albumName;
+        for (const a of detail.assets ?? []) {
+          const arr = map.get(a.id) ?? [];
+          arr.push({ id: album.id, name });
+          map.set(a.id, arr);
+        }
+      } catch { /* skip unreadable album */ }
+    }
+  } catch { /* return empty if albums endpoint fails */ }
+  return map;
+}
+
+export function enrichAsset(
+  a: DupAsset,
+  index: Map<string, { id: string; name: string }[]>,
+  webBaseUrl?: string,
+): EnrichedAssetRef {
+  const albums = index.get(a.id) ?? [];
+  return {
+    id: a.id,
+    filename: a.originalFileName ?? "",
+    size: fileSize(a),
+    fileCreatedAt: a.fileCreatedAt,
+    albumIds: albums.map((x) => x.id),
+    albumNames: albums.map((x) => x.name),
+    webUrl: webBaseUrl ? `${webBaseUrl.replace(/\/+$/, "")}/photos/${a.id}` : undefined,
+  };
+}
+
+// Keeper selection with optional album awareness.
+export function pickKeeperWithAlbums(
+  bucket: DupAsset[],
+  strategy: "oldest" | "largest",
+  albumIndex: Map<string, { id: string; name: string }[]>,
+  albumAware: boolean,
+): { keeper: DupAsset | null; flagged?: { reason: string } } {
+  if (albumAware) {
+    const inAlbum = bucket.filter((a) => (albumIndex.get(a.id) ?? []).length > 0);
+    if (inAlbum.length === 1) return { keeper: inAlbum[0]! };
+    if (inAlbum.length > 1) {
+      return {
+        keeper: null,
+        flagged: { reason: `${inAlbum.length} assets in albums (split curation), skipped for safety` },
+      };
+    }
+    // Fall through to strategy when none are in albums.
+  }
+  return { keeper: pickKeeper(bucket, strategy) };
+}
+
+// Restore note string emitted by resolve responses.
+export const RESTORE_NOTE =
+  "Trashed assets are recoverable for 30 days. Use immich_restore_by_query (or your Immich web UI > Library > Trash) to restore. Permanent removal: auto at 30d OR via immich_empty_trash (writes + confirm).";
+
 export function registerDuplicateFlowTools(server: McpServer, config: Config): void {
   server.tool(
     "immich_categorize_duplicates",
@@ -111,6 +197,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
           keeperId: string;
           discardIds: string[];
           reclaimableBytes: number;
+          matchReason: "byte-exact";
         }> = [];
         let totalDiscardAssets = 0;
         let totalReclaimable = 0;
@@ -130,6 +217,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
               keeperId: keeper.id,
               discardIds: discards.map((a) => a.id),
               reclaimableBytes: reclaim,
+              matchReason: "byte-exact",
             });
             totalDiscardAssets += discards.length;
             totalReclaimable += reclaim;
@@ -187,7 +275,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
           reclaimableBytes: reclaim,
         };
         if (args.delete !== true) {
-          return asMcpResponse({ dryRun: true, plan });
+          return asMcpResponse({ dryRun: true, plan, restoreNote: RESTORE_NOTE });
         }
         requireWrites(config);
         if (args.permanent === true) requireConfirm("immich_resolve_with_keep_strategy", args.confirm);
@@ -210,6 +298,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
           deletedCount: deleted,
           reclaimedBytes: reclaim,
           permanent: args.permanent ?? false,
+          restoreNote: RESTORE_NOTE,
         });
       } catch (e) {
         return asMcpError(surfaceError(e));

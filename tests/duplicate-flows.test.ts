@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import { installFakeSdk, resetFakeSdk, sdkCalls, mockSdkResponse } from "./_fake-sdk.js";
 installFakeSdk();
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerDuplicateFlowTools } from "../src/tools/duplicate-flows.js";
+import {
+  registerDuplicateFlowTools,
+  buildAssetAlbumIndex,
+  pickKeeperWithAlbums,
+  RESTORE_NOTE,
+} from "../src/tools/duplicate-flows.js";
 
 const cfgRead = { baseUrl: "https://x/api", apiKey: "k", allowWrites: false, verifySsl: true };
 const cfgWrite = { ...cfgRead, allowWrites: true };
@@ -263,6 +268,137 @@ describe("duplicate-flows", () => {
       expect(out.isError).toBe(true);
       expect(out.content[0]!.text).toMatch(/exceeds maxDiscards/);
       expect(sdkCalls.some((c) => c.fn === "deleteAssets")).toBe(false);
+    });
+
+    it("dry-run response includes restoreNote", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("newer", "same.jpg", 500, "2024-06-01T00:00:00Z"),
+            mkAsset("older", "same.jpg", 500, "2024-01-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_resolve_with_keep_strategy", {
+        strategy: "byte_dupes_keep_oldest",
+      });
+      const body = parsePayload(out);
+      expect(body.dryRun).toBe(true);
+      expect(body.restoreNote).toBe(RESTORE_NOTE);
+      expect(typeof body.restoreNote).toBe("string");
+      expect((body.restoreNote as string).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("immich_find_byte_dupes matchReason", () => {
+    it("returns matchReason: byte-exact on each candidate", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("a1", "same.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a2", "same.jpg", 500, "2024-01-02T00:00:00Z"),
+          ],
+        },
+        {
+          duplicateId: "g2",
+          assets: [
+            mkAsset("b1", "other.jpg", 700, "2024-02-01T00:00:00Z"),
+            mkAsset("b2", "other.jpg", 700, "2024-02-02T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_find_byte_dupes");
+      const body = parsePayload(out);
+      const candidates = body.candidates as Array<{ matchReason: string }>;
+      expect(candidates.length).toBe(2);
+      for (const c of candidates) {
+        expect(c.matchReason).toBe("byte-exact");
+      }
+    });
+  });
+
+  describe("buildAssetAlbumIndex", () => {
+    it("builds the right map from mocked getAllAlbums + getAlbumInfo", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", [
+        { id: "alb-1", albumName: "Vacation" },
+        { id: "alb-2", albumName: "Family" },
+      ]);
+      // _fake-sdk only stores one response per fn, so getAlbumInfo returns the same
+      // payload for both album fetches. Use a single album in the in-album set.
+      mockSdkResponse("getAlbumInfo", {
+        albumName: "Vacation",
+        assets: [{ id: "asset-a" }, { id: "asset-b" }],
+      });
+      const idx = await buildAssetAlbumIndex();
+      // Both album fetches return the same fixture, so each asset ends up tagged twice.
+      expect(idx.get("asset-a")!.length).toBe(2);
+      expect(idx.get("asset-b")!.length).toBe(2);
+      // Album ids come from the parent loop's `album` (alb-1 first, then alb-2).
+      expect(idx.get("asset-a")!.map((x) => x.id).sort()).toEqual(["alb-1", "alb-2"]);
+      // Album name resolves from the detail fixture.
+      expect(idx.get("asset-a")![0]!.name).toBe("Vacation");
+      expect(idx.get("asset-z")).toBeUndefined();
+    });
+
+    it("returns an empty map when getAllAlbums throws", async () => {
+      resetFakeSdk();
+      const { mockSdkError } = await import("./_fake-sdk.js");
+      mockSdkError("getAllAlbums", new Error("boom"));
+      const idx = await buildAssetAlbumIndex();
+      expect(idx.size).toBe(0);
+    });
+  });
+
+  describe("pickKeeperWithAlbums", () => {
+    const bucket = [
+      mkAsset("a1", "same.jpg", 500, "2024-01-01T00:00:00Z"),
+      mkAsset("a2", "same.jpg", 500, "2024-06-01T00:00:00Z"),
+      mkAsset("a3", "same.jpg", 500, "2024-12-01T00:00:00Z"),
+    ];
+
+    it("picks the in-album asset when exactly one bucket member is in an album", () => {
+      const idx = new Map<string, { id: string; name: string }[]>();
+      idx.set("a2", [{ id: "alb-x", name: "Album X" }]);
+      const result = pickKeeperWithAlbums(bucket, "oldest", idx, true);
+      expect(result.keeper?.id).toBe("a2");
+      expect(result.flagged).toBeUndefined();
+    });
+
+    it("returns flagged when multiple bucket members are in albums", () => {
+      const idx = new Map<string, { id: string; name: string }[]>();
+      idx.set("a1", [{ id: "alb-x", name: "Album X" }]);
+      idx.set("a3", [{ id: "alb-y", name: "Album Y" }]);
+      const result = pickKeeperWithAlbums(bucket, "oldest", idx, true);
+      expect(result.keeper).toBeNull();
+      expect(result.flagged?.reason).toMatch(/2 assets in albums/);
+    });
+
+    it("falls back to strategy when no bucket members are in albums", () => {
+      const idx = new Map<string, { id: string; name: string }[]>();
+      const result = pickKeeperWithAlbums(bucket, "oldest", idx, true);
+      // oldest -> 2024-01-01 -> a1
+      expect(result.keeper?.id).toBe("a1");
+      expect(result.flagged).toBeUndefined();
+    });
+
+    it("skips album logic entirely when albumAware is false", () => {
+      // Even with multiple in-album assets, albumAware: false uses strategy.
+      const idx = new Map<string, { id: string; name: string }[]>();
+      idx.set("a1", [{ id: "alb-x", name: "Album X" }]);
+      idx.set("a3", [{ id: "alb-y", name: "Album Y" }]);
+      const result = pickKeeperWithAlbums(bucket, "largest", idx, false);
+      // largest by size, all equal -> first asset (a1).
+      expect(result.keeper?.id).toBe("a1");
+      expect(result.flagged).toBeUndefined();
     });
   });
 });
