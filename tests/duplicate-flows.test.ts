@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
+import { z } from "zod";
 import { installFakeSdk, resetFakeSdk, sdkCalls, mockSdkResponse } from "./_fake-sdk.js";
 installFakeSdk();
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -39,10 +40,10 @@ function parsePayload(out: unknown): Record<string, unknown> {
 
 describe("duplicate-flows", () => {
   describe("immich_categorize_duplicates", () => {
-    it("bins 5 synthetic groups into the right categories", async () => {
+    it("bins 5 synthetic groups into the right categories with hyphenated keys", async () => {
       resetFakeSdk();
       const groups = [
-        // byte_exact: same name + size
+        // byte-exact: same name + size
         {
           duplicateId: "g1",
           assets: [
@@ -50,7 +51,7 @@ describe("duplicate-flows", () => {
             mkAsset("a2", "IMG_0001.jpg", 1024, "2024-01-02T00:00:00Z"),
           ],
         },
-        // resolution_variants: 1080p/4k pattern
+        // resolution-variants: 1080p/4k pattern
         {
           duplicateId: "g2",
           assets: [
@@ -58,7 +59,7 @@ describe("duplicate-flows", () => {
             mkAsset("b2", "movie_4k.mp4", 5000, "2024-02-01T00:00:00Z"),
           ],
         },
-        // burst_sequence: same YYYYMMDD_HHMMSS prefix
+        // burst-sequence: same YYYYMMDD_HHMMSS prefix
         {
           duplicateId: "g3",
           assets: [
@@ -90,17 +91,23 @@ describe("duplicate-flows", () => {
       const body = parsePayload(out);
       expect(body.total).toBe(5);
       const byCategory = body.byCategory as Record<string, number>;
-      expect(byCategory.byte_exact).toBe(1);
-      expect(byCategory.resolution_variants).toBe(1);
-      expect(byCategory.burst_sequence).toBe(1);
+      // v0.4.1: hyphenated keys, unified with bucket-level matchReason.
+      expect(byCategory["byte-exact"]).toBe(1);
+      expect(byCategory["resolution-variants"]).toBe(1);
+      expect(byCategory["burst-sequence"]).toBe(1);
       expect(byCategory.edits).toBe(1);
       expect(byCategory.unknown).toBe(1);
+      // Snake_case keys are gone.
+      expect(byCategory.byte_exact).toBeUndefined();
+      expect(byCategory.resolution_variants).toBeUndefined();
+      expect(byCategory.burst_sequence).toBeUndefined();
     });
   });
 
   describe("immich_find_byte_dupes", () => {
     it("returns 0 candidates when no (name,size) bucket has >=2 assets", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
         {
           duplicateId: "g1",
@@ -120,6 +127,7 @@ describe("duplicate-flows", () => {
 
     it("returns 1 candidate with right keeperId and discardIds for a paired bucket", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
         {
           duplicateId: "g1",
@@ -146,6 +154,7 @@ describe("duplicate-flows", () => {
 
     it("respects minSizeBytes filter", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
         {
           duplicateId: "g1",
@@ -170,6 +179,29 @@ describe("duplicate-flows", () => {
       const candidates = body.candidates as Array<{ filename: string }>;
       expect(candidates[0]!.filename).toBe("big.jpg");
     });
+
+    it("v0.4.1: fail-fast when getAllAlbums throws (album-aware default)", async () => {
+      // With albumAware=true (default), an albums-index failure must surface
+      // as an MCP error so the caller does not silently fall back to a
+      // strategy-only keeper pick that could trash curated assets.
+      resetFakeSdk();
+      const { mockSdkError } = await import("./_fake-sdk.js");
+      mockSdkError("getAllAlbums", new Error("Immich API 500: server boom"));
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("a1", "same.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a2", "same.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_find_byte_dupes") as ToolResult;
+      expect(out.isError).toBe(true);
+      expect(out.content[0]!.text).toMatch(/boom/);
+    });
   });
 
   describe("immich_resolve_with_keep_strategy", () => {
@@ -185,6 +217,7 @@ describe("duplicate-flows", () => {
 
     it("defaults to dry-run (no SDK delete)", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", dupeFixture);
       const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
       registerDuplicateFlowTools(server, cfgRead);
@@ -199,6 +232,7 @@ describe("duplicate-flows", () => {
 
     it("delete: true with writes disabled returns WriteDisabledError", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", dupeFixture);
       const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
       registerDuplicateFlowTools(server, cfgRead);
@@ -212,6 +246,7 @@ describe("duplicate-flows", () => {
 
     it("delete: true + permanent: true without confirm returns ConfirmRequiredError", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", dupeFixture);
       const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
       registerDuplicateFlowTools(server, cfgWrite);
@@ -226,6 +261,7 @@ describe("duplicate-flows", () => {
 
     it("delete: true, permanent: false (trash) calls deleteAssets with force:false and right ids", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", dupeFixture);
       mockSdkResponse("deleteAssets", undefined);
       const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
@@ -248,6 +284,7 @@ describe("duplicate-flows", () => {
 
     it("refuses when discardCount > maxDiscards", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       // Build a fixture with 3 discards
       const groups = [
         {
@@ -275,6 +312,7 @@ describe("duplicate-flows", () => {
 
     it("dry-run response includes restoreNote", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
         {
           duplicateId: "g1",
@@ -300,6 +338,7 @@ describe("duplicate-flows", () => {
   describe("immich_find_byte_dupes matchReason", () => {
     it("returns matchReason: byte-exact on each candidate", async () => {
       resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
         {
           duplicateId: "g1",
@@ -352,12 +391,23 @@ describe("duplicate-flows", () => {
       expect(idx.get("asset-z")).toBeUndefined();
     });
 
-    it("returns an empty map when getAllAlbums throws", async () => {
+    it("v0.4.1: throws when getAllAlbums throws (fail-fast, not fail-open)", async () => {
+      // Before v0.4.1 this silently returned an empty map, which made
+      // album-aware callers silently downgrade to strategy-only keeper
+      // selection. v0.4.1 lets the error propagate so the tool handler
+      // surfaces it as an MCP error.
       resetFakeSdk();
       const { mockSdkError } = await import("./_fake-sdk.js");
       mockSdkError("getAllAlbums", new Error("boom"));
-      const idx = await buildAssetAlbumIndex();
-      expect(idx.size).toBe(0);
+      await expect(buildAssetAlbumIndex()).rejects.toThrow(/boom/);
+    });
+
+    it("v0.4.1: throws when getAlbumInfo throws on any individual album", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", [{ id: "alb-1", albumName: "A" }]);
+      const { mockSdkError } = await import("./_fake-sdk.js");
+      mockSdkError("getAlbumInfo", new Error("forbidden"));
+      await expect(buildAssetAlbumIndex()).rejects.toThrow(/forbidden/);
     });
   });
 
@@ -538,7 +588,9 @@ describe("duplicate-flows", () => {
       expect(plan.bucketsResolved).toBe(1);
     });
 
-    it("immich_resolve_with_keep_strategy with exportTo writes a CSV with header + right row count", async () => {
+    it("immich_resolve_with_keep_strategy with exportTo writes a CSV with header + right row count (writes enabled)", async () => {
+      // v0.4.1: exportTo is a filesystem write, gated by IMMICH_ALLOW_WRITES
+      // even in dry-run mode. This test uses cfgWrite.
       resetFakeSdk();
       mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
@@ -560,7 +612,7 @@ describe("duplicate-flows", () => {
       const csvPath = join(tmpdir(), `immich-mcp-plan-${Date.now()}-${Math.random().toString(36).slice(2)}.csv`);
       try {
         const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
-        registerDuplicateFlowTools(server, cfgRead);
+        registerDuplicateFlowTools(server, cfgWrite);
         const out = await callTool(server, "immich_resolve_with_keep_strategy", {
           strategy: "byte_dupes_keep_oldest",
           exportTo: csvPath,
@@ -574,6 +626,134 @@ describe("duplicate-flows", () => {
         // header + 2 data rows
         expect(lines.length).toBe(3);
         expect(lines[1]).toMatch(/^g1,a\.jpg,500,500,byte-exact,k1,/);
+      } finally {
+        await fs.unlink(csvPath).catch(() => undefined);
+      }
+    });
+
+    it("v0.4.1: exportTo with writes DISABLED returns WriteDisabledError even in dry-run", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("k1", "a.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("d1", "a.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const csvPath = join(tmpdir(), `immich-mcp-refused-${Date.now()}.csv`);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_resolve_with_keep_strategy", {
+        strategy: "byte_dupes_keep_oldest",
+        exportTo: csvPath,
+      }) as ToolResult;
+      expect(out.isError).toBe(true);
+      expect(out.content[0]!.text).toMatch(/Writes disabled/);
+      // And the file was NOT created.
+      await expect(fs.stat(csvPath)).rejects.toThrow();
+    });
+
+    it("v0.4.1: exportTo to a path whose parent dir does not exist returns a clear error", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("k1", "a.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("d1", "a.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const missingDir = join(tmpdir(), `immich-mcp-nope-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const csvPath = join(missingDir, "plan.csv");
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgWrite);
+      const out = await callTool(server, "immich_resolve_with_keep_strategy", {
+        strategy: "byte_dupes_keep_oldest",
+        exportTo: csvPath,
+      }) as ToolResult;
+      expect(out.isError).toBe(true);
+      expect(out.content[0]!.text).toMatch(/parent directory does not exist/);
+    });
+
+    it("v0.4.1: exportTo to an existing file fails with EEXIST (wx semantics)", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("k1", "a.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("d1", "a.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const csvPath = join(tmpdir(), `immich-mcp-exists-${Date.now()}-${Math.random().toString(36).slice(2)}.csv`);
+      await fs.writeFile(csvPath, "pre-existing", "utf8");
+      try {
+        const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+        registerDuplicateFlowTools(server, cfgWrite);
+        const out = await callTool(server, "immich_resolve_with_keep_strategy", {
+          strategy: "byte_dupes_keep_oldest",
+          exportTo: csvPath,
+        }) as ToolResult;
+        expect(out.isError).toBe(true);
+        expect(out.content[0]!.text).toMatch(/already exists/);
+        // Original content is untouched.
+        const content = await fs.readFile(csvPath, "utf8");
+        expect(content).toBe("pre-existing");
+      } finally {
+        await fs.unlink(csvPath).catch(() => undefined);
+      }
+    });
+
+    it("v0.4.1: CSV escapes formula-injection lead chars on filenames", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            // Filename starting with =cmd is the classic CSV-injection vector.
+            mkAsset("k1", "=cmd.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("d1", "=cmd.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+        {
+          duplicateId: "g2",
+          assets: [
+            // Plus-prefix is also a formula vector in Excel.
+            mkAsset("k2", "+leadplus.jpg", 200, "2024-01-01T00:00:00Z"),
+            mkAsset("d2", "+leadplus.jpg", 200, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const csvPath = join(tmpdir(), `immich-mcp-injection-${Date.now()}-${Math.random().toString(36).slice(2)}.csv`);
+      try {
+        const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+        registerDuplicateFlowTools(server, cfgWrite);
+        const out = await callTool(server, "immich_resolve_with_keep_strategy", {
+          strategy: "byte_dupes_keep_oldest",
+          exportTo: csvPath,
+        });
+        expect((out as ToolResult).isError).toBeFalsy();
+        const content = await fs.readFile(csvPath, "utf8");
+        // The dangerous lead char must be prefixed with a single quote BEFORE
+        // the cell is quoted/escaped, so spreadsheet apps treat it as text.
+        expect(content).toContain("'=cmd.jpg");
+        expect(content).toContain("'+leadplus.jpg");
+        // And no data row's filename cell starts with a bare =/+/-/@.
+        const lines = content.split("\n").slice(1).filter(Boolean);
+        for (const line of lines) {
+          // Filename is the 2nd column (index 1 after splitting on commas).
+          // Cells with leading dangerous chars should NOT appear unquoted at
+          // the start of any data row's filename column.
+          expect(line).not.toMatch(/^[^,]*,[=+\-@]/);
+        }
       } finally {
         await fs.unlink(csvPath).catch(() => undefined);
       }
@@ -760,6 +940,296 @@ describe("duplicate-flows", () => {
       // Oldest fileCreatedAt is a2 (2024-01-01).
       expect(rec.keeperId).toBe("a2");
       expect(rec.rationale).toMatch(/oldest/i);
+    });
+
+    it("v0.4.1: rationale does NOT include 'oldest' when album signal alone drives the pick", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", [{ id: "alb-1", albumName: "Vacation" }]);
+      mockSdkResponse("getAlbumInfo", {
+        albumName: "Vacation",
+        assets: [{ id: "a2" }],
+      });
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            // a1 is older, but a2 is the only one in an album. Rationale must
+            // not claim "oldest" - that's a lie, it was the album signal.
+            mkAsset("a1", "p.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a2", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+            mkAsset("a3", "p.jpg", 500, "2024-12-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      const rec = body.recommendation as { keeperId: string; rationale: string };
+      expect(rec.keeperId).toBe("a2");
+      expect(rec.rationale).toMatch(/in 1 album/);
+      expect(rec.rationale).not.toMatch(/oldest/);
+    });
+
+    it("v0.4.1: rationale says 'favorite' when only favorite differs (no 'oldest' tail)", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            { ...mkAsset("a1", "p.jpg", 500, "2024-01-01T00:00:00Z"), isFavorite: false },
+            // a2 is the only favorite. Tied on everything else. Rationale =
+            // "favorite", NOT "favorite + oldest".
+            { ...mkAsset("a2", "p.jpg", 500, "2024-06-01T00:00:00Z"), isFavorite: true },
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      const rec = body.recommendation as { keeperId: string; rationale: string };
+      expect(rec.keeperId).toBe("a2");
+      expect(rec.rationale).toBe("favorite");
+    });
+
+    it("v0.4.1: tiebreaker is deterministic on id when all signals tie", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          // All three tie on every signal AND fileCreatedAt. Lex-smallest id wins.
+          assets: [
+            mkAsset("zz-a", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+            mkAsset("aa-a", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+            mkAsset("mm-a", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      const rec = body.recommendation as { keeperId: string; rationale: string };
+      expect(rec.keeperId).toBe("aa-a");
+      expect(rec.rationale).toBe("oldest");
+    });
+
+    it("v0.4.1: matchReason on explain output is hyphenated", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            mkAsset("a1", "same.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("a2", "same.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+      });
+      const body = parsePayload(out);
+      expect(body.matchReason).toBe("byte-exact");
+    });
+
+    it("v0.4.1: webBaseUrl schema rejects 'javascript:' and 'ftp://' (http/https only)", () => {
+      // The MCP harness calls handler() directly in these tests, bypassing
+      // the JSON-RPC layer's zod validation. Exercise the schema's parse()
+      // directly to verify the refinement does the right thing.
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const reg = (server as unknown as { _registeredTools: Record<string, { inputSchema: z.ZodTypeAny }> })._registeredTools;
+      const schema = reg["immich_explain_duplicate_group"]!.inputSchema;
+      // Valid case (https) passes.
+      expect(() =>
+        schema.parse({
+          duplicateId: validId,
+          webBaseUrl: "https://example.com",
+        }),
+      ).not.toThrow();
+      // javascript: is rejected by z.string().url() as "Invalid URL".
+      expect(() =>
+        schema.parse({
+          duplicateId: validId,
+          webBaseUrl: "javascript:alert(1)",
+        }),
+      ).toThrow();
+      // ftp: parses as a URL but our refine() blocks non-http(s) schemes.
+      expect(() =>
+        schema.parse({
+          duplicateId: validId,
+          webBaseUrl: "ftp://x.example/",
+        }),
+      ).toThrow(/http/i);
+    });
+
+    it("v0.4.1: webUrl encodes asset ids that contain spaces and reserved chars", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: validId,
+          assets: [
+            mkAsset("weird id", "p.jpg", 500, "2024-01-01T00:00:00Z"),
+            mkAsset("normal", "p.jpg", 500, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_explain_duplicate_group", {
+        duplicateId: validId,
+        webBaseUrl: "https://example.com",
+      });
+      const body = parsePayload(out);
+      const assets = body.assets as Array<{ id: string; webUrl?: string }>;
+      const weird = assets.find((a) => a.id === "weird id");
+      expect(weird?.webUrl).toBe("https://example.com/photos/weird%20id");
+      const normal = assets.find((a) => a.id === "normal");
+      expect(normal?.webUrl).toBe("https://example.com/photos/normal");
+    });
+  });
+
+  describe("v0.4.1 fixes", () => {
+    const validId = "11111111-1111-4111-8111-111111111111";
+
+    it("flagged bucket shape: keeper:null, discards:[], members:[...all]", async () => {
+      // Two in-album assets -> flagged. Verify shape has no fake keeper or
+      // discardIds that downstream tools could misuse.
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", [{ id: "alb-1", albumName: "A" }]);
+      mockSdkResponse("getAlbumInfo", {
+        albumName: "A",
+        assets: [{ id: "k1" }, { id: "d1" }],
+      });
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("k1", "x.jpg", 800, "2024-01-01T00:00:00Z"),
+            mkAsset("d1", "x.jpg", 800, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_find_byte_dupes", { albumAware: true });
+      const body = parsePayload(out);
+      const flagged = body.flagged as Array<{
+        duplicateId: string;
+        keeper: { id: string } | null;
+        discards: Array<{ id: string }>;
+        members?: Array<{ id: string }>;
+        reclaimableBytes: number;
+      }>;
+      expect(flagged.length).toBe(1);
+      const fb = flagged[0]!;
+      expect(fb.keeper).toBeNull();
+      expect(fb.discards).toEqual([]);
+      expect(Array.isArray(fb.members)).toBe(true);
+      expect(fb.members!.map((m) => m.id).sort()).toEqual(["d1", "k1"]);
+      // Nothing reclaimed because nothing selected.
+      expect(fb.reclaimableBytes).toBe(0);
+    });
+
+    it("CSV row for a flagged bucket has empty keeperId and discardIds cells", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", [{ id: "alb-1", albumName: "A" }]);
+      mockSdkResponse("getAlbumInfo", {
+        albumName: "A",
+        assets: [{ id: "k1" }, { id: "d1" }],
+      });
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("k1", "x.jpg", 800, "2024-01-01T00:00:00Z"),
+            mkAsset("d1", "x.jpg", 800, "2024-06-01T00:00:00Z"),
+          ],
+        },
+      ]);
+      const csvPath = join(tmpdir(), `immich-mcp-flagged-csv-${Date.now()}-${Math.random().toString(36).slice(2)}.csv`);
+      try {
+        const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+        registerDuplicateFlowTools(server, cfgWrite);
+        const out = await callTool(server, "immich_resolve_with_keep_strategy", {
+          strategy: "byte_dupes_keep_oldest",
+          exportTo: csvPath,
+        });
+        expect((out as ToolResult).isError).toBeFalsy();
+        const content = await fs.readFile(csvPath, "utf8");
+        const lines = content.trim().split("\n");
+        // header + one flagged row
+        expect(lines.length).toBe(2);
+        // Columns: duplicateId, filename, size, reclaimableBytes, matchReason,
+        // keeperId, keeperFileCreatedAt, keeperAlbums, discardIds, discardAlbums,
+        // flagged, flaggedReason
+        const cells = lines[1]!.split(",");
+        expect(cells[0]).toBe("g1");
+        expect(cells[1]).toBe("x.jpg");
+        expect(cells[3]).toBe("0"); // reclaimableBytes
+        expect(cells[4]).toBe("byte-exact");
+        expect(cells[5]).toBe(""); // keeperId
+        expect(cells[6]).toBe(""); // keeperFileCreatedAt
+        expect(cells[7]).toBe(""); // keeperAlbums
+        expect(cells[8]).toBe(""); // discardIds
+        expect(cells[10]).toBe("true"); // flagged
+      } finally {
+        await fs.unlink(csvPath).catch(() => undefined);
+      }
+    });
+
+    it("tailSample contains the lowest-reclaim buckets, not the first-by-id", async () => {
+      // 12 buckets with reclaim sizes 100, 200, ..., 1200. detailLimit=2
+      // means the top-2 by reclaim are popped, and tailSample (10) should
+      // contain the next 10 lowest-reclaim buckets, NOT the lex-first 10
+      // by duplicateId.
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      const groups = [];
+      for (let i = 1; i <= 12; i++) {
+        const size = i * 100;
+        // Lex-order on id by zero-padding so the id sort is well-defined,
+        // and prefix with z for low-reclaim ids so they would sort LAST by id
+        // if the buggy behavior were still in place.
+        const prefix = i <= 3 ? "z" : "a";
+        const id = `${prefix}${String(i).padStart(2, "0")}`;
+        groups.push({
+          duplicateId: `g-${id}`,
+          assets: [
+            mkAsset(`k-${id}`, `f${i}.jpg`, size, "2024-01-01T00:00:00Z"),
+            mkAsset(`d-${id}`, `f${i}.jpg`, size, "2024-06-01T00:00:00Z"),
+          ],
+        });
+      }
+      mockSdkResponse("getAssetDuplicates", groups);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_find_byte_dupes", { detailLimit: 2 });
+      const body = parsePayload(out);
+      const top = body.topByReclaim as Array<{ reclaimableBytes: number }>;
+      // top-2 are the 1200 and 1100 buckets.
+      expect(top.length).toBe(2);
+      expect(top[0]!.reclaimableBytes).toBe(1200);
+      expect(top[1]!.reclaimableBytes).toBe(1100);
+      const tail = body.tailSample as Array<{ reclaimableBytes: number }>;
+      // tail (max 10) should contain the remaining 10 buckets sorted ascending
+      // by reclaim: 100, 200, 300, ..., 1000.
+      expect(tail.length).toBe(10);
+      const tailSizes = tail.map((b) => b.reclaimableBytes);
+      expect(tailSizes).toEqual([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]);
     });
   });
 });
