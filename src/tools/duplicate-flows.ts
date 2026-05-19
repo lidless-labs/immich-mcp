@@ -19,6 +19,10 @@ interface DupAsset {
   originalFileName?: string;
   fileCreatedAt?: string;
   exifInfo?: { fileSizeInByte?: number | string };
+  // @immich/sdk AssetResponseDto carries `checksum: string` (base64-encoded
+  // SHA1). Treat as optional here so synthetic fixtures and older asset shapes
+  // remain compatible; v0.4.2 dispatcher skips assets missing checksum.
+  checksum?: string;
 }
 
 interface DupGroup {
@@ -26,13 +30,50 @@ interface DupGroup {
   assets: DupAsset[];
 }
 
-type Category = "byte-exact" | "resolution-variants" | "burst-sequence" | "edits" | "unknown";
+// MatchMode controls how we decide two assets are "duplicates" inside a single
+// Immich duplicate group:
+//   - "checksum"  -> SHA1-identical (true byte-identity). Default in v0.4.2.
+//   - "name-size" -> same originalFileName + fileSizeInByte (v0.3-v0.4.1
+//                    behavior). A weaker heuristic kept for back-compat.
+type MatchMode = "checksum" | "name-size";
+
+type Category =
+  | "checksum-exact"
+  | "name-size-match"
+  | "resolution-variants"
+  | "burst-sequence"
+  | "edits"
+  | "unknown";
 
 function fileSize(a: DupAsset): number {
   return Number(a.exifInfo?.fileSizeInByte ?? 0);
 }
 
-function byteDupeSubgroups(group: DupGroup): Map<string, DupAsset[]> {
+function getChecksum(a: DupAsset): string | undefined {
+  return (a as unknown as { checksum?: string }).checksum;
+}
+
+// Group by SHA1 checksum. Subgroups with <2 members are dropped. Assets that
+// have no checksum field are skipped entirely (we cannot prove identity).
+function checksumSubgroups(group: DupGroup): Map<string, DupAsset[]> {
+  const buckets = new Map<string, DupAsset[]>();
+  for (const a of group.assets) {
+    const ck = getChecksum(a);
+    if (!ck) continue;
+    const arr = buckets.get(ck) ?? [];
+    arr.push(a);
+    buckets.set(ck, arr);
+  }
+  for (const k of [...buckets.keys()]) {
+    if ((buckets.get(k) ?? []).length < 2) buckets.delete(k);
+  }
+  return buckets;
+}
+
+// Group by (originalFileName, fileSizeInByte). This is the v0.3-v0.4.1 path,
+// renamed for honesty in v0.4.2 (it was misleadingly called "byte-exact"
+// despite never reading any actual bytes).
+function nameSizeSubgroups(group: DupGroup): Map<string, DupAsset[]> {
   const buckets = new Map<string, DupAsset[]>();
   for (const a of group.assets) {
     const key = `${a.originalFileName ?? ""}|${fileSize(a)}`;
@@ -46,8 +87,13 @@ function byteDupeSubgroups(group: DupGroup): Map<string, DupAsset[]> {
   return buckets;
 }
 
+function selectSubgroups(group: DupGroup, mode: MatchMode): Map<string, DupAsset[]> {
+  return mode === "checksum" ? checksumSubgroups(group) : nameSizeSubgroups(group);
+}
+
 function categorize(g: DupGroup): Category {
-  if (byteDupeSubgroups(g).size > 0) return "byte-exact";
+  if (checksumSubgroups(g).size > 0) return "checksum-exact";
+  if (nameSizeSubgroups(g).size > 0) return "name-size-match";
   const names = g.assets.map((a) => a.originalFileName ?? "");
   if (names.some((n) => /1080p|4k|720p|480p|\bhd\b|\bsd\b|\blow\b|\bhigh\b/i.test(n))) {
     return "resolution-variants";
@@ -79,12 +125,22 @@ export type EnrichedAssetRef = {
   albumNames: string[];
   webUrl?: string;
 };
+// v0.4.2: matchReason `byte-exact` is split into `checksum-exact` (real SHA1
+// match) and `name-size-match` (the weaker v0.3-v0.4.1 heuristic).
+export type BucketMatchReason =
+  | "checksum-exact"
+  | "name-size-match"
+  | "perceptual-clip"
+  | "resolution-variants"
+  | "burst-sequence"
+  | "edits";
+
 export type EnrichedBucket = {
   duplicateId: string;
   filename: string;
   size: number;
   reclaimableBytes: number;
-  matchReason: "byte-exact" | "perceptual-clip" | "resolution-variants" | "burst-sequence" | "edits";
+  matchReason: BucketMatchReason;
   keeper: EnrichedAssetRef | null;
   discards: EnrichedAssetRef[];
   members?: EnrichedAssetRef[];
@@ -256,6 +312,7 @@ function buildEnrichedBucket(
   discards: DupAsset[],
   reclaimableBytes: number,
   albumIndex: Map<string, { id: string; name: string }[]>,
+  matchReason: BucketMatchReason,
   webBaseUrl?: string,
   flagged?: { reason: string },
 ): EnrichedBucket {
@@ -264,7 +321,7 @@ function buildEnrichedBucket(
     filename,
     size: fileSize(keeper),
     reclaimableBytes,
-    matchReason: "byte-exact",
+    matchReason,
     keeper: enrichAsset(keeper, albumIndex, webBaseUrl),
     discards: discards.map((d) => enrichAsset(d, albumIndex, webBaseUrl)),
     ...(flagged ? { flagged } : {}),
@@ -279,6 +336,7 @@ function buildFlaggedBucket(
   filename: string,
   bucket: DupAsset[],
   albumIndex: Map<string, { id: string; name: string }[]>,
+  matchReason: BucketMatchReason,
   webBaseUrl: string | undefined,
   reason: string,
 ): EnrichedBucket {
@@ -287,7 +345,7 @@ function buildFlaggedBucket(
     filename,
     size: fileSize(bucket[0]!),
     reclaimableBytes: 0,
-    matchReason: "byte-exact",
+    matchReason,
     keeper: null,
     discards: [],
     members: bucket.map((a) => enrichAsset(a, albumIndex, webBaseUrl)),
@@ -298,14 +356,15 @@ function buildFlaggedBucket(
 export function registerDuplicateFlowTools(server: McpServer, config: Config): void {
   server.tool(
     "immich_categorize_duplicates",
-    "Bin duplicate groups by shape: byte-exact, resolution-variants, burst-sequence, edits, unknown. Returns counts plus up to 3 sample groups per category.",
+    "Bin duplicate groups by shape: checksum-exact (SHA1 match), name-size-match (same filename+size only, weaker), resolution-variants, burst-sequence, edits, unknown. Returns counts plus up to 3 sample groups per category.",
     {},
     async () => {
       try {
         const raw = await sdk.getAssetDuplicates();
         const groups = raw as unknown as DupGroup[];
         const cats: Record<Category, DupGroup[]> = {
-          "byte-exact": [],
+          "checksum-exact": [],
+          "name-size-match": [],
           "resolution-variants": [],
           "burst-sequence": [],
           edits: [],
@@ -327,20 +386,23 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
 
   server.tool(
     "immich_find_byte_dupes",
-    "Return ready-to-trash candidates: per (filename, size) bucket inside each duplicate group, keep the oldest, list the rest as discardIds. Album-aware: buckets with multiple in-album assets are flagged for manual review.",
+    "Return ready-to-trash candidates by SHA1 checksum match (default) or by name+size (weaker, opt-in). Per bucket inside each duplicate group, keep the oldest, list the rest as discardIds. Album-aware: buckets with multiple in-album assets are flagged for manual review. matchMode: 'checksum' is true byte-identity; 'name-size' is the v0.3-v0.4.1 heuristic.",
     {
       minSizeBytes: z.number().int().min(0).optional(),
       albumAware: z.boolean().optional(),
       detailLimit: z.number().int().min(1).max(500).optional(),
       webBaseUrl: webBaseUrlSchema.optional(),
+      matchMode: z.enum(["checksum", "name-size"]).optional(),
     },
-    async ({ minSizeBytes, albumAware, detailLimit, webBaseUrl }) => {
+    async ({ minSizeBytes, albumAware, detailLimit, webBaseUrl, matchMode }) => {
       try {
         const raw = await sdk.getAssetDuplicates();
         const groups = raw as unknown as DupGroup[];
         const min = minSizeBytes ?? 0;
         const aware = albumAware ?? true;
         const limit = detailLimit ?? 50;
+        const mode: MatchMode = matchMode ?? "checksum";
+        const reason: BucketMatchReason = mode === "checksum" ? "checksum-exact" : "name-size-match";
         const albumIndex = aware
           ? await buildAssetAlbumIndex()
           : new Map<string, { id: string; name: string }[]>();
@@ -352,24 +414,23 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
           keeperId: string;
           discardIds: string[];
           reclaimableBytes: number;
-          matchReason: "byte-exact";
+          matchReason: BucketMatchReason;
         }> = [];
         const enrichedKept: EnrichedBucket[] = [];
         const flagged: EnrichedBucket[] = [];
         let totalDiscardAssets = 0;
         let totalReclaimable = 0;
         for (const g of groups) {
-          const buckets = byteDupeSubgroups(g);
-          for (const [key, bucket] of buckets.entries()) {
-            const [filename] = key.split("|");
-            const fname = filename ?? "";
+          const buckets = selectSubgroups(g, mode);
+          for (const bucket of buckets.values()) {
             const sample = bucket[0]!;
+            const fname = sample.originalFileName ?? "";
             const size = fileSize(sample);
             if (size < min) continue;
             const decision = pickKeeperWithAlbums(bucket, "oldest", albumIndex, aware);
             if (decision.flagged) {
               flagged.push(
-                buildFlaggedBucket(g.duplicateId, fname, bucket, albumIndex, webBaseUrl, decision.flagged.reason),
+                buildFlaggedBucket(g.duplicateId, fname, bucket, albumIndex, reason, webBaseUrl, decision.flagged.reason),
               );
               continue;
             }
@@ -383,10 +444,10 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
               keeperId: keeper.id,
               discardIds: discards.map((a) => a.id),
               reclaimableBytes: reclaim,
-              matchReason: "byte-exact",
+              matchReason: reason,
             });
             enrichedKept.push(
-              buildEnrichedBucket(g.duplicateId, fname, keeper, discards, reclaim, albumIndex, webBaseUrl),
+              buildEnrichedBucket(g.duplicateId, fname, keeper, discards, reclaim, albumIndex, reason, webBaseUrl),
             );
             totalDiscardAssets += discards.length;
             totalReclaimable += reclaim;
@@ -397,6 +458,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
         const rest = sortedKept.slice(limit);
         const tailSample = deterministicTailSample(rest, 10);
         return asMcpResponse({
+          matchMode: mode,
           candidates,
           totalCandidates: candidates.length,
           totalDiscardAssets,
@@ -413,7 +475,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
 
   server.tool(
     "immich_resolve_with_keep_strategy",
-    "End-to-end dedupe. Dry-run by default. delete: true + writes enabled = soft trash (recoverable). permanent: true + confirm: true = bypass trash. Album-aware skips buckets with split curation.",
+    "End-to-end dedupe. Dry-run by default. delete: true + writes enabled = soft trash (recoverable). permanent: true + confirm: true = bypass trash. matchMode: 'checksum' (SHA1, default, true byte-identity) or 'name-size' (v0.3-v0.4.1 heuristic). Album-aware skips buckets with split curation.",
     {
       strategy: z.enum(["byte_dupes_keep_oldest", "byte_dupes_keep_largest"]),
       minSizeBytes: z.number().int().min(0).optional(),
@@ -425,6 +487,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
       detailLimit: z.number().int().min(1).max(500).optional(),
       webBaseUrl: webBaseUrlSchema.optional(),
       exportTo: z.string().optional(),
+      matchMode: z.enum(["checksum", "name-size"]).optional(),
     },
     async (args) => {
       try {
@@ -435,6 +498,8 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
         const aware = args.albumAware ?? true;
         const limit = args.detailLimit ?? 50;
         const webBaseUrl = args.webBaseUrl;
+        const mode: MatchMode = args.matchMode ?? "checksum";
+        const reason: BucketMatchReason = mode === "checksum" ? "checksum-exact" : "name-size-match";
         const albumIndex = aware
           ? await buildAssetAlbumIndex()
           : new Map<string, { id: string; name: string }[]>();
@@ -446,15 +511,14 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
         const flagged: EnrichedBucket[] = [];
         const min = args.minSizeBytes ?? 0;
         for (const g of groups) {
-          for (const [key, bucket] of byteDupeSubgroups(g).entries()) {
-            const [filename] = key.split("|");
-            const fname = filename ?? "";
+          for (const bucket of selectSubgroups(g, mode).values()) {
             const sample = bucket[0]!;
+            const fname = sample.originalFileName ?? "";
             if (fileSize(sample) < min) continue;
             const decision = pickKeeperWithAlbums(bucket, keepBy, albumIndex, aware);
             if (decision.flagged) {
               flagged.push(
-                buildFlaggedBucket(g.duplicateId, fname, bucket, albumIndex, webBaseUrl, decision.flagged.reason),
+                buildFlaggedBucket(g.duplicateId, fname, bucket, albumIndex, reason, webBaseUrl, decision.flagged.reason),
               );
               continue;
             }
@@ -467,7 +531,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
             }
             reclaim += reclaimBucket;
             enrichedKept.push(
-              buildEnrichedBucket(g.duplicateId, fname, keeper, discards, reclaimBucket, albumIndex, webBaseUrl),
+              buildEnrichedBucket(g.duplicateId, fname, keeper, discards, reclaimBucket, albumIndex, reason, webBaseUrl),
             );
           }
         }
@@ -478,6 +542,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
         const flaggedDetail = flagged.slice(0, limit);
         const plan = {
           strategy: args.strategy,
+          matchMode: mode,
           bucketsResolved: buckets,
           discardCount: discardIds.length,
           reclaimableBytes: reclaim,
@@ -525,6 +590,7 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
           dryRun: false,
           executed: true,
           strategy: args.strategy,
+          matchMode: mode,
           deletedCount: deleted,
           reclaimedBytes: reclaim,
           permanent: args.permanent ?? false,
@@ -609,6 +675,182 @@ export function registerDuplicateFlowTools(server: McpServer, config: Config): v
           total: enriched.length,
           matchReason,
           assets: enriched,
+          recommendation,
+        });
+      } catch (e) {
+        return asMcpError(surfaceError(e));
+      }
+    },
+  );
+
+  server.tool(
+    "immich_audit_trash",
+    "Cross-check every trashed asset against the active library. Reports orphans (trashed assets with no byte-identical sibling in active) so you can spot potentially-unique content before permanent deletion. Default matchMode: 'checksum' (true SHA1 byte-identity). 'name-size' is the v0.3-v0.4.1 heuristic.",
+    {
+      matchMode: z.enum(["checksum", "name-size"]).optional(),
+      exportTo: z.string().optional(),
+      webBaseUrl: webBaseUrlSchema.optional(),
+    },
+    async (args) => {
+      try {
+        const mode: MatchMode = args.matchMode ?? "checksum";
+
+        // searchAssets uses an epoch-zero trashedAfter sentinel + withDeleted
+        // to scope to trash. Post-filter is belt-and-suspenders in case the
+        // server broadens trashedAfter semantics in a future release.
+        const TRASH_SENTINEL = "1970-01-01T00:00:00.000Z";
+
+        const trashed: DupAsset[] = [];
+        let page = 1;
+        while (true) {
+          const r = await withRetry("searchAssets:trash", () =>
+            sdk.searchAssets({
+              metadataSearchDto: {
+                withDeleted: true,
+                trashedAfter: TRASH_SENTINEL,
+                size: 1000,
+                page,
+              } as never,
+            }),
+          );
+          const items = (
+            (r as unknown as { assets?: { items?: DupAsset[] } }).assets?.items ?? []
+          ).filter((a) => (a as unknown as { isTrashed?: boolean }).isTrashed === true);
+          if (items.length === 0) break;
+          trashed.push(...items);
+          if (items.length < 1000) break;
+          page++;
+          if (page > 60) break; // safety bound: 60k assets max
+        }
+
+        const active: DupAsset[] = [];
+        page = 1;
+        while (true) {
+          const r = await withRetry("searchAssets:active", () =>
+            sdk.searchAssets({ metadataSearchDto: { size: 1000, page } as never }),
+          );
+          // Defensive belt-and-suspenders: exclude anything still marked
+          // isTrashed in case the server or SDK returns trashed items in the
+          // default (no-withDeleted) search.
+          const items = (
+            (r as unknown as { assets?: { items?: DupAsset[] } }).assets?.items ?? []
+          ).filter((a) => (a as unknown as { isTrashed?: boolean }).isTrashed !== true);
+          if (items.length === 0) break;
+          active.push(...items);
+          if (items.length < 1000) break;
+          page++;
+          if (page > 60) break;
+        }
+
+        // Build active-index using the same key formula as the trash lookup.
+        const keyOf = (a: DupAsset): string | null => {
+          if (mode === "checksum") {
+            const ck = getChecksum(a);
+            return ck ? ck : null;
+          }
+          const fn = a.originalFileName ?? "";
+          const sz = fileSize(a);
+          return `${fn}|${sz}`;
+        };
+        const activeIndex = new Set<string>();
+        for (const a of active) {
+          const k = keyOf(a);
+          if (k) activeIndex.add(k);
+        }
+
+        // Triage each trashed asset.
+        const orphans: Array<{
+          id: string;
+          filename: string;
+          size: number;
+          fileCreatedAt?: string;
+          checksum?: string;
+          webUrl?: string;
+        }> = [];
+        let confirmed = 0;
+        const webBase = args.webBaseUrl ? args.webBaseUrl.replace(/\/?$/, "/") : undefined;
+        for (const t of trashed) {
+          const k = keyOf(t);
+          if (k && activeIndex.has(k)) {
+            confirmed++;
+          } else {
+            orphans.push({
+              id: t.id,
+              filename: t.originalFileName ?? "",
+              size: fileSize(t),
+              fileCreatedAt: t.fileCreatedAt,
+              checksum: getChecksum(t),
+              webUrl: webBase
+                ? new URL(`photos/${encodeURIComponent(t.id)}`, webBase).toString()
+                : undefined,
+            });
+          }
+        }
+
+        // Optional CSV export. Same write-gate + wx flag + formula-injection
+        // guard as immich_resolve_with_keep_strategy's exportTo.
+        let exportPath: string | undefined;
+        let exportRowCount: number | undefined;
+        if (args.exportTo) {
+          requireWrites(config);
+          const header = "trashedId,filename,sizeBytes,checksum,fileCreatedAt,status";
+          const body = trashed
+            .map((t) => {
+              const k = keyOf(t);
+              const status = k && activeIndex.has(k) ? "confirmed-byte-identical" : "ORPHAN-NO-MATCH";
+              return [
+                t.id,
+                t.originalFileName ?? "",
+                fileSize(t),
+                getChecksum(t) ?? "",
+                t.fileCreatedAt ?? "",
+                status,
+              ]
+                .map(csvEscape)
+                .join(",");
+            })
+            .join("\n");
+          const content = body.length > 0 ? header + "\n" + body + "\n" : header + "\n";
+
+          // Parent-dir + wx semantics, mirroring writePlanCsv.
+          const absPath = resolvePath(args.exportTo);
+          const parent = dirname(absPath);
+          try {
+            const stat = await fs.stat(parent);
+            if (!stat.isDirectory()) {
+              throw new Error(`exportTo parent path is not a directory: ${parent}`);
+            }
+          } catch (e) {
+            const code = (e as NodeJS.ErrnoException).code;
+            if (code === "ENOENT") {
+              throw new Error(`exportTo parent directory does not exist: ${parent}`);
+            }
+            throw e;
+          }
+          try {
+            await fs.writeFile(absPath, content, { encoding: "utf8", flag: "wx" });
+          } catch (e) {
+            const code = (e as NodeJS.ErrnoException).code;
+            if (code === "EEXIST") {
+              throw new Error(`exportTo target already exists (refusing to overwrite): ${absPath}`);
+            }
+            throw e;
+          }
+          exportPath = absPath;
+          exportRowCount = trashed.length;
+        }
+
+        const recommendation = orphans.length === 0
+          ? `All ${confirmed} trashed assets have ${mode === "checksum" ? "byte-identical (SHA1)" : "name+size"} siblings in the active library. Safe to empty trash (or wait for the 30-day auto-empty).`
+          : `${orphans.length} of ${trashed.length} trashed assets have NO ${mode === "checksum" ? "byte-identical (SHA1)" : "name+size"} sibling in active (potentially unique content). Investigate before emptying trash. Use immich_restore_by_query (or restore via Immich web UI > Library > Trash) to recover anything you still want.`;
+
+        return asMcpResponse({
+          matchMode: mode,
+          totalTrashed: trashed.length,
+          confirmedSafeToDelete: confirmed,
+          orphansCount: orphans.length,
+          orphans: orphans.slice(0, 50),
+          ...(exportPath ? { exportPath, exportRowCount } : {}),
           recommendation,
         });
       } catch (e) {

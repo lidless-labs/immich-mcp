@@ -21,11 +21,25 @@ async function callTool(server: McpServer, name: string, args: Record<string, un
   return reg[name]!.handler(args, {});
 }
 
-const mkAsset = (id: string, name: string, size: number, when: string) => ({
+// mkAsset defaults checksum to a deterministic synthetic value derived from
+// (name, size). Two assets that share filename and size therefore also share
+// checksum by default, which matches the v0.4.2 "checksum" default mode for
+// the typical fixtures that test the keep-oldest / album-aware logic without
+// caring about checksum-vs-name-size semantics specifically. Pass an explicit
+// `checksum` to override (e.g. to model the SHA1-distinct-but-name-collision
+// scenario that motivated v0.4.2).
+const mkAsset = (
+  id: string,
+  name: string,
+  size: number,
+  when: string,
+  checksum?: string,
+) => ({
   id,
   originalFileName: name,
   fileCreatedAt: when,
   exifInfo: { fileSizeInByte: size },
+  checksum: checksum ?? `sha1-${name}-${size}`,
 });
 
 interface ToolResult {
@@ -91,16 +105,43 @@ describe("duplicate-flows", () => {
       const body = parsePayload(out);
       expect(body.total).toBe(5);
       const byCategory = body.byCategory as Record<string, number>;
-      // v0.4.1: hyphenated keys, unified with bucket-level matchReason.
-      expect(byCategory["byte-exact"]).toBe(1);
+      // v0.4.2: byte-exact split into checksum-exact (SHA1 match) and
+      // name-size-match (same name+size only). mkAsset defaults checksum to a
+      // deterministic synthetic derived from (name, size), so the paired
+      // (IMG_0001.jpg, 1024) assets in g1 share checksum and land in
+      // checksum-exact.
+      expect(byCategory["checksum-exact"]).toBe(1);
+      expect(byCategory["name-size-match"]).toBe(0);
       expect(byCategory["resolution-variants"]).toBe(1);
       expect(byCategory["burst-sequence"]).toBe(1);
       expect(byCategory.edits).toBe(1);
       expect(byCategory.unknown).toBe(1);
-      // Snake_case keys are gone.
+      // Old aliases are gone.
+      expect(byCategory["byte-exact"]).toBeUndefined();
       expect(byCategory.byte_exact).toBeUndefined();
       expect(byCategory.resolution_variants).toBeUndefined();
       expect(byCategory.burst_sequence).toBeUndefined();
+    });
+
+    it("v0.4.2: a group with matching name+size but DISTINCT checksums lands in name-size-match", async () => {
+      resetFakeSdk();
+      const groups = [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("a1", "IMG.jpg", 1024, "2024-01-01T00:00:00Z", "sha1-AAA"),
+            mkAsset("a2", "IMG.jpg", 1024, "2024-01-02T00:00:00Z", "sha1-BBB"),
+          ],
+        },
+      ];
+      mockSdkResponse("getAssetDuplicates", groups);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_categorize_duplicates");
+      const body = parsePayload(out);
+      const byCategory = body.byCategory as Record<string, number>;
+      expect(byCategory["checksum-exact"]).toBe(0);
+      expect(byCategory["name-size-match"]).toBe(1);
     });
   });
 
@@ -336,7 +377,7 @@ describe("duplicate-flows", () => {
   });
 
   describe("immich_find_byte_dupes matchReason", () => {
-    it("returns matchReason: byte-exact on each candidate", async () => {
+    it("v0.4.2: returns matchReason: checksum-exact on each candidate under default mode", async () => {
       resetFakeSdk();
       mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
@@ -359,10 +400,11 @@ describe("duplicate-flows", () => {
       registerDuplicateFlowTools(server, cfgRead);
       const out = await callTool(server, "immich_find_byte_dupes");
       const body = parsePayload(out);
+      expect(body.matchMode).toBe("checksum");
       const candidates = body.candidates as Array<{ matchReason: string }>;
       expect(candidates.length).toBe(2);
       for (const c of candidates) {
-        expect(c.matchReason).toBe("byte-exact");
+        expect(c.matchReason).toBe("checksum-exact");
       }
     });
   });
@@ -625,7 +667,8 @@ describe("duplicate-flows", () => {
         expect(lines[0]).toMatch(/^duplicateId,filename,size,reclaimableBytes,matchReason,/);
         // header + 2 data rows
         expect(lines.length).toBe(3);
-        expect(lines[1]).toMatch(/^g1,a\.jpg,500,500,byte-exact,k1,/);
+        // v0.4.2: default matchMode is checksum, so matchReason on rows is checksum-exact.
+        expect(lines[1]).toMatch(/^g1,a\.jpg,500,500,checksum-exact,k1,/);
       } finally {
         await fs.unlink(csvPath).catch(() => undefined);
       }
@@ -1023,7 +1066,7 @@ describe("duplicate-flows", () => {
       expect(rec.rationale).toBe("oldest");
     });
 
-    it("v0.4.1: matchReason on explain output is hyphenated", async () => {
+    it("v0.4.2: matchReason on explain output prefers checksum-exact when SHA1 matches", async () => {
       resetFakeSdk();
       mockSdkResponse("getAllAlbums", []);
       mockSdkResponse("getAssetDuplicates", [
@@ -1041,7 +1084,10 @@ describe("duplicate-flows", () => {
         duplicateId: validId,
       });
       const body = parsePayload(out);
-      expect(body.matchReason).toBe("byte-exact");
+      // mkAsset's synthetic checksum is the same for matching name+size, so
+      // the categorize() pass detects a checksum subgroup before falling back
+      // to name-size.
+      expect(body.matchReason).toBe("checksum-exact");
     });
 
     it("v0.4.1: webBaseUrl schema rejects 'javascript:' and 'ftp://' (http/https only)", () => {
@@ -1180,7 +1226,8 @@ describe("duplicate-flows", () => {
         expect(cells[0]).toBe("g1");
         expect(cells[1]).toBe("x.jpg");
         expect(cells[3]).toBe("0"); // reclaimableBytes
-        expect(cells[4]).toBe("byte-exact");
+        // v0.4.2: default matchMode "checksum" -> matchReason "checksum-exact"
+        expect(cells[4]).toBe("checksum-exact");
         expect(cells[5]).toBe(""); // keeperId
         expect(cells[6]).toBe(""); // keeperFileCreatedAt
         expect(cells[7]).toBe(""); // keeperAlbums
@@ -1230,6 +1277,194 @@ describe("duplicate-flows", () => {
       expect(tail.length).toBe(10);
       const tailSizes = tail.map((b) => b.reclaimableBytes);
       expect(tailSizes).toEqual([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]);
+    });
+  });
+
+  describe("v0.4.2 checksum mode", () => {
+    it("matchMode: 'checksum' + matching SHA1 yields candidates with matchReason: checksum-exact", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("older", "same.jpg", 500, "2024-01-01T00:00:00Z", "sha1-AAA"),
+            mkAsset("newer", "same.jpg", 500, "2024-06-01T00:00:00Z", "sha1-AAA"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_find_byte_dupes", { matchMode: "checksum" });
+      const body = parsePayload(out);
+      expect(body.matchMode).toBe("checksum");
+      const candidates = body.candidates as Array<{ matchReason: string; keeperId: string; discardIds: string[] }>;
+      expect(candidates.length).toBe(1);
+      expect(candidates[0]!.matchReason).toBe("checksum-exact");
+      expect(candidates[0]!.keeperId).toBe("older");
+      expect(candidates[0]!.discardIds).toEqual(["newer"]);
+    });
+
+    it("matchMode: 'checksum' + same name/size but DISTINCT SHA1 yields ZERO candidates (the v0.4.2 safety win)", async () => {
+      // The bug-finding fixture: three videos that share filename + size +
+      // timestamp coincidentally, but actually have distinct SHA1 checksums.
+      // v0.3-v0.4.1 would have happily trashed two of them. v0.4.2 default
+      // must refuse.
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("a", "VID_001.mp4", 1024, "2024-01-01T00:00:00Z", "sha1-AAA"),
+            mkAsset("b", "VID_001.mp4", 1024, "2024-01-01T00:00:00Z", "sha1-BBB"),
+            mkAsset("c", "VID_001.mp4", 1024, "2024-01-01T00:00:00Z", "sha1-CCC"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_find_byte_dupes", { matchMode: "checksum" });
+      const body = parsePayload(out);
+      expect(body.totalCandidates).toBe(0);
+      expect(body.candidates).toEqual([]);
+      // No flagged either: a checksum subgroup with <2 members is silently
+      // dropped before keeper logic runs.
+      expect(body.flagged).toEqual([]);
+    });
+
+    it("matchMode: 'name-size' + same name/size but DISTINCT SHA1 still yields candidates (back-compat path)", async () => {
+      resetFakeSdk();
+      mockSdkResponse("getAllAlbums", []);
+      mockSdkResponse("getAssetDuplicates", [
+        {
+          duplicateId: "g1",
+          assets: [
+            mkAsset("a", "VID_001.mp4", 1024, "2024-01-01T00:00:00Z", "sha1-AAA"),
+            mkAsset("b", "VID_001.mp4", 1024, "2024-06-01T00:00:00Z", "sha1-BBB"),
+          ],
+        },
+      ]);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_find_byte_dupes", { matchMode: "name-size" });
+      const body = parsePayload(out);
+      expect(body.matchMode).toBe("name-size");
+      const candidates = body.candidates as Array<{ matchReason: string; keeperId: string }>;
+      expect(candidates.length).toBe(1);
+      expect(candidates[0]!.matchReason).toBe("name-size-match");
+      // keep-oldest -> "a"
+      expect(candidates[0]!.keeperId).toBe("a");
+    });
+  });
+
+  describe("immich_audit_trash", () => {
+    // searchAssets returns { assets: { items: [...] } }. Trash pagination
+    // post-filters on isTrashed === true. Note: _fake-sdk returns the SAME
+    // response for every call to the same fn name, so we have to seed a
+    // single response that contains BOTH trashed and active markers and rely
+    // on isTrashed post-filter to split them. The audit tool's pagination
+    // safety bound (page>60) prevents infinite loops; we keep test fixtures
+    // small enough (<1000 items) that the loop terminates on the second page
+    // returning <1000 items too.
+
+    it("matchMode 'checksum' + trashed has unique checksum -> 1 orphan, 0 confirmed", async () => {
+      resetFakeSdk();
+      mockSdkResponse("searchAssets", {
+        assets: {
+          items: [
+            // Trashed orphan: no matching checksum in active.
+            { id: "t1", originalFileName: "orphan.jpg", checksum: "sha1-ORPHAN", isTrashed: true, exifInfo: { fileSizeInByte: 100 }, fileCreatedAt: "2024-01-01T00:00:00Z" },
+            // Active asset with a different checksum.
+            { id: "a1", originalFileName: "other.jpg", checksum: "sha1-OTHER", isTrashed: false, exifInfo: { fileSizeInByte: 200 } },
+          ],
+        },
+      });
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_audit_trash", {}) as ToolResult;
+      expect(out.isError).toBeFalsy();
+      const body = parsePayload(out);
+      expect(body.matchMode).toBe("checksum");
+      expect(body.totalTrashed).toBe(1);
+      expect(body.confirmedSafeToDelete).toBe(0);
+      expect(body.orphansCount).toBe(1);
+      const orphans = body.orphans as Array<{ id: string; checksum: string }>;
+      expect(orphans.length).toBe(1);
+      expect(orphans[0]!.id).toBe("t1");
+      expect(orphans[0]!.checksum).toBe("sha1-ORPHAN");
+      expect((body.recommendation as string)).toMatch(/byte-identical/);
+    });
+
+    it("matchMode 'checksum' + trashed and active share checksum -> 1 confirmed, 0 orphans", async () => {
+      resetFakeSdk();
+      mockSdkResponse("searchAssets", {
+        assets: {
+          items: [
+            { id: "t1", originalFileName: "shared.jpg", checksum: "sha1-SHARED", isTrashed: true, exifInfo: { fileSizeInByte: 100 }, fileCreatedAt: "2024-01-01T00:00:00Z" },
+            { id: "a1", originalFileName: "shared.jpg", checksum: "sha1-SHARED", isTrashed: false, exifInfo: { fileSizeInByte: 100 } },
+          ],
+        },
+      });
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_audit_trash", {}) as ToolResult;
+      expect(out.isError).toBeFalsy();
+      const body = parsePayload(out);
+      expect(body.totalTrashed).toBe(1);
+      expect(body.confirmedSafeToDelete).toBe(1);
+      expect(body.orphansCount).toBe(0);
+      expect(body.orphans).toEqual([]);
+    });
+
+    it("exportTo with writes ENABLED writes a CSV and returns exportPath/exportRowCount", async () => {
+      resetFakeSdk();
+      mockSdkResponse("searchAssets", {
+        assets: {
+          items: [
+            { id: "t1", originalFileName: "orphan.jpg", checksum: "sha1-ORPHAN", isTrashed: true, exifInfo: { fileSizeInByte: 100 }, fileCreatedAt: "2024-01-01T00:00:00Z" },
+            { id: "t2", originalFileName: "ok.jpg", checksum: "sha1-OK", isTrashed: true, exifInfo: { fileSizeInByte: 200 }, fileCreatedAt: "2024-02-01T00:00:00Z" },
+            { id: "a1", originalFileName: "ok.jpg", checksum: "sha1-OK", isTrashed: false, exifInfo: { fileSizeInByte: 200 } },
+          ],
+        },
+      });
+      const csvPath = join(tmpdir(), `immich-mcp-audit-${Date.now()}-${Math.random().toString(36).slice(2)}.csv`);
+      try {
+        const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+        registerDuplicateFlowTools(server, cfgWrite);
+        const out = await callTool(server, "immich_audit_trash", { exportTo: csvPath }) as ToolResult;
+        expect(out.isError).toBeFalsy();
+        const body = parsePayload(out);
+        expect(body.exportPath).toBe(csvPath);
+        expect(body.exportRowCount).toBe(2);
+        const content = await fs.readFile(csvPath, "utf8");
+        const lines = content.trim().split("\n");
+        expect(lines[0]).toBe("trashedId,filename,sizeBytes,checksum,fileCreatedAt,status");
+        // 1 orphan + 1 confirmed = 2 data rows
+        expect(lines.length).toBe(3);
+        expect(content).toMatch(/ORPHAN-NO-MATCH/);
+        expect(content).toMatch(/confirmed-byte-identical/);
+      } finally {
+        await fs.unlink(csvPath).catch(() => undefined);
+      }
+    });
+
+    it("exportTo with writes DISABLED returns WriteDisabledError and does NOT create the file", async () => {
+      resetFakeSdk();
+      mockSdkResponse("searchAssets", {
+        assets: {
+          items: [
+            { id: "t1", originalFileName: "orphan.jpg", checksum: "sha1-ORPHAN", isTrashed: true, exifInfo: { fileSizeInByte: 100 }, fileCreatedAt: "2024-01-01T00:00:00Z" },
+          ],
+        },
+      });
+      const csvPath = join(tmpdir(), `immich-mcp-audit-refused-${Date.now()}.csv`);
+      const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+      registerDuplicateFlowTools(server, cfgRead);
+      const out = await callTool(server, "immich_audit_trash", { exportTo: csvPath }) as ToolResult;
+      expect(out.isError).toBe(true);
+      expect(out.content[0]!.text).toMatch(/Writes disabled/);
+      await expect(fs.stat(csvPath)).rejects.toThrow();
     });
   });
 });
