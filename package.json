@@ -41,10 +41,15 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "@immich/sdk": "^2.7.5",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "undici": "^6.26.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

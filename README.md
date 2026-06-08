@@ -26,7 +26,7 @@ Companion to [jellyfin-mcp](https://github.com/solomonneas/jellyfin-mcp) and [re
 - Two-tier write protection: writes are gated by the `IMMICH_ALLOW_WRITES=true` env var, and destructive tools additionally require `confirm: true` per call
 - People recognition: list, update, hide, get assets per person, merge duplicates
 - Albums, tags, shared links, and activities as first-class typed surfaces
-- Asset uploads from local paths, EXIF reads, and original / thumbnail downloads
+- Asset uploads from local paths (confined to an opt-in `IMMICH_UPLOAD_BASE_DIR`), EXIF reads, and original / thumbnail downloads
 - Works with Claude Desktop, Claude Code, OpenClaw, Hermes Agent, Codex CLI, and any MCP-compatible client
 
 ## Tools
@@ -49,7 +49,7 @@ Companion to [jellyfin-mcp](https://github.com/solomonneas/jellyfin-mcp) and [re
 - `immich_restore_from_trash` - undo a soft delete
 - `immich_download_asset_original` - return the original file bytes
 - `immich_download_asset_thumbnail` - return a preview/thumbnail
-- `immich_upload_asset_from_path` - upload a local file
+- `immich_upload_asset_from_path` - upload a local file *(confined to `IMMICH_UPLOAD_BASE_DIR`; refused when that env var is unset)*
 
 ### Search (3)
 - `immich_search_smart` - CLIP / semantic search by natural-language query
@@ -134,7 +134,8 @@ Set these environment variables in your MCP client config:
 | `IMMICH_BASE_URL` | yes | - | Base URL of your Immich API, e.g. `https://photos.example.com/api` |
 | `IMMICH_API_KEY` | yes | - | API key from Account Settings > API Keys in the Immich web UI |
 | `IMMICH_ALLOW_WRITES` | no | `false` | Set to `true` to expose write and delete tools. Reads always work. |
-| `IMMICH_VERIFY_SSL` | no | `true` | Set to `false` for self-signed certs |
+| `IMMICH_VERIFY_SSL` | no | `true` | Set to `false` to accept self-signed certs. The relaxed TLS check is scoped to the Immich client only (via a dedicated request dispatcher); it does **not** disable certificate validation process-wide. |
+| `IMMICH_UPLOAD_BASE_DIR` | no | - | Absolute directory that `immich_upload_asset_from_path` is confined to. When unset, path-based upload is refused. Files must resolve (after following symlinks) inside this directory. |
 
 ### Getting an API key
 

@@ -12,6 +12,7 @@ import {
   surfaceError,
   requireWrites,
   requireConfirm,
+  resolveUploadPath,
 } from "./_util.js";
 
 export function registerAssetTools(server: McpServer, config: Config): void {
@@ -117,7 +118,7 @@ export function registerAssetTools(server: McpServer, config: Config): void {
 
   server.tool(
     "immich_upload_asset_from_path",
-    "Upload a local file to Immich.",
+    "Upload a local file to Immich. filePath must resolve inside IMMICH_UPLOAD_BASE_DIR (path-based upload is refused when that env var is unset).",
     {
       filePath: z.string().min(1),
       deviceId: z.string().default("immich-mcp"),
@@ -125,14 +126,15 @@ export function registerAssetTools(server: McpServer, config: Config): void {
     async ({ filePath, deviceId }) => {
       try {
         requireWrites(config);
-        const buf = await fs.readFile(filePath);
-        const stat = await fs.stat(filePath);
+        const safePath = await resolveUploadPath(config, filePath);
+        const buf = await fs.readFile(safePath);
+        const stat = await fs.stat(safePath);
         const checksum = createHash("sha1").update(buf).digest("base64");
-        const deviceAssetId = `${path.basename(filePath)}-${stat.mtimeMs}`;
+        const deviceAssetId = `${path.basename(safePath)}-${stat.mtimeMs}`;
         const FileCtor =
           (globalThis as unknown as { File?: typeof File }).File ??
           ((await import("node:buffer")) as unknown as { File: typeof File }).File;
-        const file = new FileCtor([buf], path.basename(filePath));
+        const file = new FileCtor([buf], path.basename(safePath));
         const res = await sdk.uploadAsset({
           xImmichChecksum: checksum,
           assetMediaCreateDto: {

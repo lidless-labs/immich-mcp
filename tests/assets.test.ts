@@ -82,6 +82,21 @@ describe("asset tools - write gate", () => {
   });
 });
 
+describe("asset tools - upload path confinement", () => {
+  it("immich_upload_asset_from_path refuses when IMMICH_UPLOAD_BASE_DIR is unset", async () => {
+    resetFakeSdk();
+    const server = new McpServer({ name: "immich-mcp", version: "0.0.0-test" });
+    registerAssetTools(server, cfgWrite); // writes enabled, no uploadBaseDir
+    const out = await callTool(server, "immich_upload_asset_from_path", {
+      filePath: "/etc/passwd",
+    }) as { isError?: boolean; content: { text: string }[] };
+    expect(out.isError).toBe(true);
+    expect(out.content[0]!.text).toMatch(/IMMICH_UPLOAD_BASE_DIR/);
+    // Must never reach the SDK upload call.
+    expect(sdkCalls.find((c) => c.fn === "uploadAsset")).toBeFalsy();
+  });
+});
+
 describe("asset tools - confirm gate", () => {
   let server: McpServer;
   beforeEach(() => {

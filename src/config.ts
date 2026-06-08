@@ -3,6 +3,12 @@ export interface Config {
   apiKey: string;
   allowWrites: boolean;
   verifySsl: boolean;
+  /**
+   * Absolute directory that path-based uploads are confined to. When unset,
+   * `immich_upload_asset_from_path` refuses to read any local file. Set via
+   * IMMICH_UPLOAD_BASE_DIR.
+   */
+  uploadBaseDir?: string | undefined;
 }
 
 function bool(value: string | undefined, fallback: boolean): boolean {
@@ -24,5 +30,6 @@ export function getConfig(): Config {
     apiKey,
     allowWrites: bool(process.env.IMMICH_ALLOW_WRITES, false),
     verifySsl: bool(process.env.IMMICH_VERIFY_SSL, true),
+    uploadBaseDir: process.env.IMMICH_UPLOAD_BASE_DIR || undefined,
   };
 }
