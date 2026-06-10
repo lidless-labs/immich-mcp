@@ -1,0 +1,16 @@
+#!/bin/bash
+# Single verification entrypoint. CI and AGENTS.md both defer to this file,
+# so the gate lives in exactly one place.
+#
+# Runs the unconditional Definition of Done gates only. Tests are fully
+# mocked (tests/_fake-sdk.ts); this never touches a live Immich server.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Belt and braces: make sure the live-server integration suite can never
+# be pulled in by ambient environment.
+unset IMMICH_INTEGRATION
+
+npm test
+npm run typecheck
+npm run build

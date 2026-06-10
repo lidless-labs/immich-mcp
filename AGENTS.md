@@ -7,7 +7,12 @@
 - Default branch is `master`, not `main`. CI triggers on `master`.
 
 ## Definition of Done
-Before reporting any substantive change complete, run ALL of these and confirm each passes:
+```
+./scripts/verify
+```
+Runs `npm test`, `npm run typecheck`, and `npm run build` in order, fully mocked, never against a live Immich server.
+
+Before reporting any substantive change complete, run it and confirm it passes. It covers ALL of:
 - `npm test` (full suite, not just the targeted file)
 - `npm run typecheck`
 - `npm run build`
