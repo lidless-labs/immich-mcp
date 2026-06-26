@@ -1,0 +1,68 @@
+name: Bug report
+description: A tool returned the wrong result, errored, or behaved unexpectedly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please redact any tokens, API keys, private hostnames, and absolute paths before posting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you asked the agent / called the tool to do, and what came back.
+      placeholder: Called immich_search_smart with "sunset" and got an empty result, but the same query returns photos in the Immich web UI.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool(s) involved
+      placeholder: immich_search_smart, immich_list_assets
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: immich-mcp version
+      placeholder: 0.5.0 (npm ls -g immich-mcp, or the version in package.json)
+    validations:
+      required: true
+  - type: input
+    id: immich-version
+    attributes:
+      label: Immich server version
+      placeholder: e.g. v1.119.0
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Desktop, Claude Code, OpenClaw, Codex CLI, etc.
+    validations:
+      required: true
+  - type: dropdown
+    id: writes
+    attributes:
+      label: Were writes enabled?
+      description: Was IMMICH_ALLOW_WRITES set to true?
+      options:
+        - "false (reads only)"
+        - "true (writes enabled)"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output or logs
+      description: Paste the MCP error or stderr. Redact tokens, keys, hostnames, and absolute paths.
+      render: text
+    validations:
+      required: false

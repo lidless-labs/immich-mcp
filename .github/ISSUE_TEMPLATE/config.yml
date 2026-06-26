@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: immich-mcp on the web
+    url: https://lidless.dev/immich-mcp
+    about: Overview, tool list, and configuration for immich-mcp.
+  - name: Immich project and docs
+    url: https://immich.app
+    about: For questions about Immich itself (the server, its API, search, or recognition), see the upstream Immich project.
+  - name: Security report
+    url: https://github.com/lidless-labs/immich-mcp/security/policy
+    about: Do not file security issues publicly. See SECURITY.md.

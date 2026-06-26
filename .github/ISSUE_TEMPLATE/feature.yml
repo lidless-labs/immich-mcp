@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest a new tool, a new input, or a coverage gap in the Immich surface.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        immich-mcp aims to be the broadest, safest Immich MCP surface. New tools and inputs are welcome, especially where they map onto a real Immich API capability.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can't you do today
+      description: The workflow or query you want an agent to handle that the current tools do not cover.
+      placeholder: There is no way to list or manage Immich libraries / external storage from a tool call.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed tool or input
+      description: What the new tool (or new input on an existing tool) would do, and its rough shape.
+      placeholder: immich_list_libraries -> returns external library definitions and their scan status.
+    validations:
+      required: true
+  - type: input
+    id: immich-endpoint
+    attributes:
+      label: Backing Immich API endpoint (if known)
+      description: The Immich REST endpoint or SDK call this would map onto.
+      placeholder: GET /api/libraries
+    validations:
+      required: false
+  - type: dropdown
+    id: write
+    attributes:
+      label: Is this a read or a write?
+      options:
+        - "Read (always available)"
+        - "Write / delete (writes-gated)"
+        - "Destructive (writes-gated + confirm)"
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false
