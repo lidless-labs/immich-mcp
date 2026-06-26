@@ -23,11 +23,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/solomonneas/immich-mcp.git"
+    "url": "https://github.com/lidless-labs/immich-mcp.git"
   },
-  "homepage": "https://github.com/solomonneas/immich-mcp#readme",
+  "homepage": "https://github.com/lidless-labs/immich-mcp#readme",
   "bugs": {
-    "url": "https://github.com/solomonneas/immich-mcp/issues"
+    "url": "https://github.com/lidless-labs/immich-mcp/issues"
   },
   "keywords": [
     "mcp",
