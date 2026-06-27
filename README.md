@@ -1,14 +1,10 @@
+<p align="center">
+  <img src="docs/assets/immich-mcp-banner.jpg" alt="immich-mcp banner" width="900">
+</p>
+
 <h1 align="center">immich-mcp</h1>
 
 <p align="center"><strong>An MCP server that puts your self-hosted Immich photo and video library behind LLM tool calls, so an AI client can search, curate, and clean it up in plain language.</strong></p>
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/immich-mcp"><img src="https://img.shields.io/npm/v/immich-mcp?style=for-the-badge&label=npm&color=2563EB" alt="npm version" /></a>
-  <a href="https://github.com/lidless-labs/immich-mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/lidless-labs/immich-mcp/ci.yml?branch=master&style=for-the-badge&label=ci" alt="CI status" /></a>
-  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js 20+" />
-  <img src="https://img.shields.io/badge/MCP-1.x-7C3AED?style=for-the-badge" alt="MCP 1.x" />
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2EA043?style=for-the-badge" alt="MIT License" /></a>
-</p>
 
 <p align="center">
   <a href="https://lidless.dev/immich-mcp"><strong>Website</strong></a>
@@ -16,6 +12,13 @@
   <a href="https://www.npmjs.com/package/immich-mcp">npm</a>
   &nbsp;·&nbsp;
   <a href="https://immich.app">Immich</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/npm/v/immich-mcp?style=for-the-badge&logo=npm&label=npm" alt="npm version">
+  <img src="https://img.shields.io/github/actions/workflow/status/lidless-labs/immich-mcp/ci.yml?branch=master&style=for-the-badge&label=ci" alt="CI status">
+  <img src="https://img.shields.io/badge/MCP-server-8A2BE2?style=for-the-badge" alt="MCP server">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License">
 </p>
 
 **What it is.** `immich-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server for [Immich](https://immich.app), the self-hosted photo and video library. It exposes the Immich API as typed MCP tools so any MCP client, like Claude Desktop, Claude Code, OpenClaw, or Codex CLI, can browse and search your photo library, manage albums and tags, recognize people, surface memories, and resolve duplicates in plain language.
@@ -36,6 +39,25 @@
 - **Manage assets**: read metadata and EXIF, favorite, archive, rate, geotag, soft-delete (trash), restore, and upload from a confined local directory.
 
 Reads always work. Writes and deletes only appear when you opt in, and the most destructive ones require a per-call `confirm: true`.
+
+## Install
+
+The quickstart above uses `npx -y immich-mcp`, which needs no install. To install globally instead:
+
+```bash
+npm install -g immich-mcp
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/lidless-labs/immich-mcp.git
+cd immich-mcp
+npm install
+npm run build
+```
+
+When running from a source checkout, point your client's `command` at `node` and `args` at the absolute path to `dist/index.js`.
 
 ## Quickstart
 
@@ -93,24 +115,6 @@ Copy this into your MCP client. It uses `npx -y immich-mcp` so there is nothing 
   ```
 
 Prefer a global install or a source checkout? See [Install](#install).
-
-## Configuration
-
-Set these environment variables in your MCP client config:
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `IMMICH_BASE_URL` | yes | - | Base URL of your Immich API, e.g. `https://photos.example.com/api` (or `http://192.0.2.10:2283/api` for a LAN host). |
-| `IMMICH_API_KEY` | yes | - | API key from Account Settings > API Keys in the Immich web UI. |
-| `IMMICH_ALLOW_WRITES` | no | `false` | Set to `true` to expose write and delete tools. Reads always work. |
-| `IMMICH_VERIFY_SSL` | no | `true` | Set to `false` to accept self-signed certs. The relaxed TLS check is scoped to the Immich client only (a dedicated request dispatcher); it does **not** disable certificate validation process-wide. |
-| `IMMICH_UPLOAD_BASE_DIR` | no | - | Absolute directory that `immich_upload_asset_from_path` is confined to. When unset, path-based upload is refused. Files must resolve (after following symlinks) inside this directory. |
-
-### Getting an API key
-
-1. Log into Immich.
-2. Account Settings > API Keys > New API Key.
-3. Name it (e.g. `mcp`) and copy the value.
 
 ## Tools
 
@@ -222,6 +226,24 @@ Set these environment variables in your MCP client config:
 - `immich_list_jobs` - queue status for background jobs (thumbnails, ML, metadata, sidecar)
 - `immich_run_job` - send a command to a background job *(destructive commands require `confirm: true`)*
 
+## Configuration
+
+Set these environment variables in your MCP client config:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `IMMICH_BASE_URL` | yes | - | Base URL of your Immich API, e.g. `https://photos.example.com/api` (or `http://192.0.2.10:2283/api` for a LAN host). |
+| `IMMICH_API_KEY` | yes | - | API key from Account Settings > API Keys in the Immich web UI. |
+| `IMMICH_ALLOW_WRITES` | no | `false` | Set to `true` to expose write and delete tools. Reads always work. |
+| `IMMICH_VERIFY_SSL` | no | `true` | Set to `false` to accept self-signed certs. The relaxed TLS check is scoped to the Immich client only (a dedicated request dispatcher); it does **not** disable certificate validation process-wide. |
+| `IMMICH_UPLOAD_BASE_DIR` | no | - | Absolute directory that `immich_upload_asset_from_path` is confined to. When unset, path-based upload is refused. Files must resolve (after following symlinks) inside this directory. |
+
+### Getting an API key
+
+1. Log into Immich.
+2. Account Settings > API Keys > New API Key.
+3. Name it (e.g. `mcp`) and copy the value.
+
 ## Example prompts
 
 > Show me memories from this week.
@@ -249,25 +271,6 @@ Calls `immich_search_then_album` to search and create the album in one writes-ga
 - **Dry-run by default for dedupe.** Resolution tools report what they would do before they touch anything.
 - **Path-based upload is confined.** `immich_upload_asset_from_path` only reads inside `IMMICH_UPLOAD_BASE_DIR` (after resolving symlinks), and is refused entirely when that variable is unset.
 - **Relaxed TLS is scoped.** `IMMICH_VERIFY_SSL=false` only relaxes the Immich client's dispatcher; it does not weaken certificate validation for the rest of the process.
-
-## Install
-
-The quickstart above uses `npx -y immich-mcp`, which needs no install. To install globally instead:
-
-```bash
-npm install -g immich-mcp
-```
-
-Or from source:
-
-```bash
-git clone https://github.com/lidless-labs/immich-mcp.git
-cd immich-mcp
-npm install
-npm run build
-```
-
-When running from a source checkout, point your client's `command` at `node` and `args` at the absolute path to `dist/index.js`.
 
 ## Why not the other options?
 
