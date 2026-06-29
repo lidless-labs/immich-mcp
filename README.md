@@ -244,6 +244,39 @@ Set these environment variables in your MCP client config:
 2. Account Settings > API Keys > New API Key.
 3. Name it (e.g. `mcp`) and copy the value.
 
+## CLI
+
+The same package ships a read-only control CLI, `immichctl`, for shells, cron, and CI. It shares the `@immich/sdk` core with the MCP server and reads the same `IMMICH_BASE_URL` / `IMMICH_API_KEY` env config. It exposes only the read tools (server, library, and search lookups); every write, delete, upload, and job-control tool stays in the MCP surface behind the `IMMICH_ALLOW_WRITES` gate and is unreachable from the CLI.
+
+```bash
+npx immich-mcp@latest ping
+# or, installed globally:
+immichctl ping
+immichctl server stats
+immichctl storage
+immichctl capabilities
+immichctl albums list
+immichctl albums get 00000000-0000-0000-0000-000000000001
+immichctl assets list --type image --favorite --size 20
+immichctl assets stats
+immichctl people list --with-hidden
+immichctl tags list
+immichctl duplicates
+immichctl jobs
+immichctl memories --saved
+immichctl search metadata --city Madrid --type image
+immichctl search smart "sunset over the ocean"
+immichctl server stats --json        # raw JSON for piping
+```
+
+Run `immichctl help` for the full command and flag list. `--json` emits raw JSON instead of the concise human-readable summary. Exit codes: `0` success, `1` runtime error (Immich unreachable / call failed), `2` usage error (unknown command/flag or bad value).
+
+Point `IMMICH_BASE_URL` at your Immich API, e.g. `https://photos.example.com/api` (or `http://192.0.2.10:2283/api` for a LAN host).
+
+### Starting the MCP server
+
+`immichctl mcp` (or the back-compat `immich-mcp` bin) starts the stdio MCP server. If a launcher referenced the file path `dist/index.js` directly, it keeps working; new launchers can point at `dist/mcp-bin.js` (or `dist/cli.js mcp`). Launchers that use the `immich-mcp` bin name need no change.
+
 ## Example prompts
 
 > Show me memories from this week.

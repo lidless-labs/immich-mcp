@@ -6,12 +6,13 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "immich-mcp": "dist/index.js"
+    "immich-mcp": "dist/mcp-bin.js",
+    "immichctl": "dist/cli.js"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/cli.js mcp",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "npm run build && IMMICH_INTEGRATION=true vitest run tests/integration",
