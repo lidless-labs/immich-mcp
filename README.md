@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/npm/v/immich-mcp?style=for-the-badge&logo=npm&label=npm" alt="npm version">
-  <img src="https://img.shields.io/github/actions/workflow/status/lidless-labs/immich-mcp/ci.yml?branch=master&style=for-the-badge&label=ci" alt="CI status">
+  <img src="https://img.shields.io/github/actions/workflow/status/lidless-labs/immichctl/ci.yml?branch=master&style=for-the-badge&label=ci" alt="CI status">
   <img src="https://img.shields.io/badge/MCP-compatible-8A2BE2?style=for-the-badge" alt="MCP compatible">
   <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License">
 </p>
@@ -51,8 +51,8 @@ npm install -g immich-mcp
 Or from source:
 
 ```bash
-git clone https://github.com/lidless-labs/immich-mcp.git
-cd immich-mcp
+git clone https://github.com/lidless-labs/immichctl.git
+cd immichctl
 npm install
 npm run build
 ```

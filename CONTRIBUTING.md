@@ -30,8 +30,8 @@ A PR that adds a destructive capability without these guards will not land.
 ## Local dev
 
 ```bash
-git clone https://github.com/lidless-labs/immich-mcp.git
-cd immich-mcp
+git clone https://github.com/lidless-labs/immichctl.git
+cd immichctl
 npm install
 npm run build
 npm test
