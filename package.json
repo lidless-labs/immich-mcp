@@ -7,6 +7,7 @@
   "main": "dist/index.js",
   "bin": {
     "immich-mcp": "dist/mcp-bin.js",
+    "immichctrl": "dist/cli.js",
     "immichctl": "dist/cli.js"
   },
   "scripts": {
@@ -24,16 +25,16 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lidless-labs/immichctl.git"
+    "url": "https://github.com/lidless-labs/immichctrl.git"
   },
-  "homepage": "https://github.com/lidless-labs/immichctl#readme",
+  "homepage": "https://github.com/lidless-labs/immichctrl#readme",
   "bugs": {
-    "url": "https://github.com/lidless-labs/immichctl/issues"
+    "url": "https://github.com/lidless-labs/immichctrl/issues"
   },
   "keywords": [
     "mcp",
     "cli",
-    "immichctl",
+    "immichctrl",
     "immich",
     "photos",
     "model-context-protocol",

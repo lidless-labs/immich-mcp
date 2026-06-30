@@ -59,10 +59,10 @@ export type Parsed =
     }
   | { kind: "search-smart"; json: boolean; query: string; size: number; page: number };
 
-export const HELP = `immichctl - read-only operator CLI for an Immich photo server
+export const HELP = `immichctrl - read-only operator CLI for an Immich photo server
 
 Usage:
-  immichctl <command> [subcommand] [options]
+  immichctrl <command> [subcommand] [options]
 
 Server (read-only):
   ping                       Verify connectivity (server pong)

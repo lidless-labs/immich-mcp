@@ -7,5 +7,5 @@ contact_links:
     url: https://immich.app
     about: For questions about Immich itself (the server, its API, search, or recognition), see the upstream Immich project.
   - name: Security report
-    url: https://github.com/lidless-labs/immichctl/security/policy
+    url: https://github.com/lidless-labs/immichctrl/security/policy
     about: Do not file security issues publicly. See SECURITY.md.
