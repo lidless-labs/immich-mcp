@@ -1,35 +1,35 @@
 <p align="center">
-  <img src="docs/assets/immich-mcp-banner.jpg" alt="immich-mcp banner" width="900">
+  <img src="docs/assets/immichctl-banner.jpg" alt="immichctl banner" width="900">
 </p>
 
-<h1 align="center">immich-mcp</h1>
+<h1 align="center">immichctl</h1>
 
-<p align="center"><strong>An MCP server that puts your self-hosted Immich photo and video library behind LLM tool calls, so an AI client can search, curate, and clean it up in plain language.</strong></p>
+<p align="center"><strong>An operator control CLI for Immich, with an MCP adapter so AI clients can search, curate, and clean up your self-hosted photo and video library through the same safe tool surface.</strong></p>
 
 <p align="center">
   <a href="https://lidless.dev/immich-mcp"><strong>Website</strong></a>
-  &nbsp;·&nbsp;
+  &nbsp;|&nbsp;
   <a href="https://www.npmjs.com/package/immich-mcp">npm</a>
-  &nbsp;·&nbsp;
+  &nbsp;|&nbsp;
   <a href="https://immich.app">Immich</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/npm/v/immich-mcp?style=for-the-badge&logo=npm&label=npm" alt="npm version">
   <img src="https://img.shields.io/github/actions/workflow/status/lidless-labs/immich-mcp/ci.yml?branch=master&style=for-the-badge&label=ci" alt="CI status">
-  <img src="https://img.shields.io/badge/MCP-server-8A2BE2?style=for-the-badge" alt="MCP server">
+  <img src="https://img.shields.io/badge/MCP-compatible-8A2BE2?style=for-the-badge" alt="MCP compatible">
   <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License">
 </p>
 
-**What it is.** `immich-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server for [Immich](https://immich.app), the self-hosted photo and video library. It exposes the Immich API as typed MCP tools so any MCP client, like Claude Desktop, Claude Code, OpenClaw, or Codex CLI, can browse and search your photo library, manage albums and tags, recognize people, surface memories, and resolve duplicates in plain language.
+**What it is.** `immichctl` is an operator control CLI for [Immich](https://immich.app), the self-hosted photo and video library. It gives shells, cron, CI, and automation agents a typed way to inspect your library, search assets, audit storage, and run common read-only workflows. The same package keeps the [Model Context Protocol](https://modelcontextprotocol.io) surface available through `immichctl mcp` and the back-compat `immich-mcp` binary, so MCP clients like Claude Desktop, Claude Code, OpenClaw, or Codex CLI can browse and search your photo library, manage albums and tags, recognize people, surface memories, and resolve duplicates in plain language.
 
-**Why use it.** Immich already holds your whole life in photos, but the web UI is built for clicking, not for asking. Wiring it through MCP lets you say "find every sunset photo from last summer and put them in an album" or "show me what is taking up the most space in trash" and have an agent do the work through audited tool calls instead of hand-clicking.
+**Why use it.** Immich already holds your whole life in photos, but the web UI is built for clicking, not for repeatable operator workflows. `immichctl` gives you scriptable commands like `immichctl server stats`, `immichctl search smart "sunset over the ocean"`, and `immichctl duplicates`; the MCP adapter lets an AI client ask for the same kind of work through audited tool calls instead of hand-clicking.
 
-**How it differs.** It is the broadest Immich MCP surface available: 74 tools across 16 domains, including memories, duplicate detection with checksum-safe resolution, trash auditing, and motion-photo stacks that other Immich MCP servers do not cover. Writes are off by default and destructive calls demand explicit confirmation, so an agent cannot quietly delete your photos.
+**How it differs.** It is ctl-first and MCP-compatible: the package installs `immichctl` for operator use, while `immichctl mcp` and `immich-mcp` keep the full MCP adapter available. The MCP surface remains broad: 74 tools across 16 domains, including memories, duplicate detection with checksum-safe resolution, trash auditing, and motion-photo stacks that other Immich MCP servers do not cover. Writes are off by default and destructive calls demand explicit confirmation, so an agent cannot quietly delete your photos.
 
 ## What it does
 
-`immich-mcp` connects a self-hosted Immich photo library to an LLM through the Model Context Protocol. It turns Immich's REST API into 74 typed, schema-validated tool calls grouped into 16 domains, so an MCP-compatible AI client can drive your photo and video library directly:
+`immichctl` connects a self-hosted Immich photo library to operator workflows and MCP-compatible AI clients. The CLI covers read-only server, library, search, people, album, tag, duplicate, jobs, and memories workflows. The MCP adapter turns Immich's REST API into 74 typed, schema-validated tool calls grouped into 16 domains, so an MCP-compatible AI client can drive your photo and video library directly:
 
 - **Search** your photo library by natural language (CLIP / smart search), by metadata (date, location, camera, people, tags), or by a server-side discovery feed.
 - **Curate** albums, tags, shared links, and stacks (motion photos, bracketed shots, RAW + JPEG pairs).
@@ -42,7 +42,7 @@ Reads always work. Writes and deletes only appear when you opt in, and the most 
 
 ## Install
 
-The quickstart above uses `npx -y immich-mcp`, which needs no install. To install globally instead:
+The MCP client config below uses `npx -y immich-mcp`, which needs no install and keeps the existing npm package name for compatibility. To install globally instead:
 
 ```bash
 npm install -g immich-mcp
@@ -64,13 +64,13 @@ When running from a source checkout, point your client's `command` at `node` and
 ```bash
 # 1. Get an Immich API key: Account Settings > API Keys > New API Key in the Immich web UI.
 
-# 2. Run it directly with npx (no install needed):
+# 2. Run a CLI check without installing globally:
 IMMICH_BASE_URL=https://photos.example.com/api \
 IMMICH_API_KEY=your_key_here \
-npx -y immich-mcp
+npm exec --yes --package immich-mcp -- immichctl ping
 ```
 
-The server speaks MCP over stdio, so it is meant to be launched by an MCP client rather than used interactively. Wire it into your client with the config below.
+After a global install, the operator CLI is available as `immichctl`. To start the MCP adapter instead, use `immichctl mcp` or the back-compat `immich-mcp` binary. MCP launchers can keep using the config below.
 
 ## MCP client config
 
@@ -228,7 +228,7 @@ Prefer a global install or a source checkout? See [Install](#install).
 
 ## Configuration
 
-Set these environment variables in your MCP client config:
+Set these environment variables in your shell or MCP client config:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -246,10 +246,10 @@ Set these environment variables in your MCP client config:
 
 ## CLI
 
-The same package ships a read-only control CLI, `immichctl`, for shells, cron, and CI. It shares the `@immich/sdk` core with the MCP server and reads the same `IMMICH_BASE_URL` / `IMMICH_API_KEY` env config. It exposes only the read tools (server, library, and search lookups); every write, delete, upload, and job-control tool stays in the MCP surface behind the `IMMICH_ALLOW_WRITES` gate and is unreachable from the CLI.
+`immichctl` is the primary operator interface for shells, cron, and CI. It shares the `@immich/sdk` core with the MCP adapter and reads the same `IMMICH_BASE_URL` / `IMMICH_API_KEY` env config. It exposes only the read tools (server, library, and search lookups); every write, delete, upload, and job-control tool stays in the MCP surface behind the `IMMICH_ALLOW_WRITES` gate and is unreachable from the CLI.
 
 ```bash
-npx immich-mcp@latest ping
+npm exec --yes --package immich-mcp -- immichctl ping
 # or, installed globally:
 immichctl ping
 immichctl server stats
@@ -273,9 +273,9 @@ Run `immichctl help` for the full command and flag list. `--json` emits raw JSON
 
 Point `IMMICH_BASE_URL` at your Immich API, e.g. `https://photos.example.com/api` (or `http://192.0.2.10:2283/api` for a LAN host).
 
-### Starting the MCP server
+### Starting the MCP adapter
 
-`immichctl mcp` (or the back-compat `immich-mcp` bin) starts the stdio MCP server. If a launcher referenced the file path `dist/index.js` directly, it keeps working; new launchers can point at `dist/mcp-bin.js` (or `dist/cli.js mcp`). Launchers that use the `immich-mcp` bin name need no change.
+`immichctl mcp` (or the back-compat `immich-mcp` bin) starts the stdio MCP adapter. If a launcher referenced the file path `dist/index.js` directly, it keeps working; new launchers can point at `dist/mcp-bin.js` (or `dist/cli.js mcp`). Launchers that use the `immich-mcp` bin name need no change.
 
 ## Example prompts
 
@@ -297,7 +297,7 @@ Calls `immich_search_then_album` to search and create the album in one writes-ga
 
 ## Safety model
 
-`immich-mcp` is designed to be safe to hand to an autonomous agent:
+`immichctl` and its MCP adapter are designed to be safe to hand to automation:
 
 - **Reads are always allowed. Writes are opt-in.** Write and delete tools only register when `IMMICH_ALLOW_WRITES=true`.
 - **Destructive calls require an explicit `confirm: true`.** Bulk updates, permanent deletes, merges, emptying trash, and similar refuse to run otherwise, even with writes enabled.
@@ -307,18 +307,18 @@ Calls `immich_search_then_album` to search and create the album in one writes-ga
 
 ## Why not the other options?
 
-- **The Immich web UI** is built for clicking through a grid. It is great for browsing and terrible for "do X across thousands of photos." This server is for the bulk, query-driven, agent-assisted work the UI does not make easy.
-- **The Immich CLI** uploads and manages assets from scripts, but it is not an MCP server and an LLM cannot call it as typed tools. `immich-mcp` is the tool-call surface for an agent.
+- **The Immich web UI** is built for clicking through a grid. It is great for browsing and awkward for repeatable "do X across thousands of photos" operator workflows.
+- **The Immich CLI** uploads and manages assets from scripts, but it is not an MCP adapter and an LLM cannot call it as typed tools. `immichctl` focuses on operator reads, while `immichctl mcp` and `immich-mcp` provide the MCP tool-call surface for an agent.
 - **Other Immich MCP servers** tend to cover the basics (browse, search, albums). This one is broader: 74 tools spanning memories, motion-photo stacks, checksum-safe duplicate resolution, trash auditing, and job control, with a two-tier write-protection model built in.
 - **Writing your own glue around the Immich REST API** works, but you would re-implement schema validation, pagination, write-gating, confirmation guards, and the dedupe safety logic that this server already ships and tests.
 
-## What immich-mcp is not
+## What this package is not
 
 - It is **not** a replacement for Immich. You still run your own Immich server; this connects an AI client to it.
-- It is **not** a hosted service. It runs locally on stdio, launched by your MCP client. Nothing is sent anywhere except to the Immich server you point it at.
+- It is **not** a hosted service. The CLI runs locally, and the MCP adapter runs locally on stdio when launched by your MCP client. Nothing is sent anywhere except to the Immich server you point it at.
 - It is **not** a photo editor or an ML model. It calls Immich's existing search, recognition, and dedup features; it does not run its own.
 - It does **not** delete or modify anything unless you set `IMMICH_ALLOW_WRITES=true`, and the destructive tools still demand a per-call `confirm: true`.
-- It is **not** an official Immich project. It is a community MCP server that uses the public Immich API.
+- It is **not** an official Immich project. It is a community operator CLI and MCP adapter that uses the public Immich API.
 
 ## License
 
