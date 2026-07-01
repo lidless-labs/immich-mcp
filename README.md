@@ -15,10 +15,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/npm/v/immich-mcp?style=for-the-badge&logo=npm&label=npm" alt="npm version">
-  <img src="https://img.shields.io/github/actions/workflow/status/lidless-labs/immichctrl/ci.yml?branch=master&style=for-the-badge&label=ci" alt="CI status">
-  <img src="https://img.shields.io/badge/MCP-compatible-8A2BE2?style=for-the-badge" alt="MCP compatible">
-  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License">
+  <img src="https://shieldcn.dev/npm/immich-mcp.svg" alt="npm version">
+  <img src="https://shieldcn.dev/github/ci/lidless-labs/immichctrl.svg?branch=master&workflow=ci.yml" alt="CI status">
+  <img src="https://shieldcn.dev/badge/MCP-compatible-8A2BE2.svg" alt="MCP compatible">
+  <img src="https://shieldcn.dev/badge/license-MIT-green.svg" alt="MIT License">
 </p>
 
 **What it is.** `immichctrl` is an operator control CLI for [Immich](https://immich.app), the self-hosted photo and video library. It gives shells, cron, CI, and automation agents a typed way to inspect your library, search assets, audit storage, and run common read-only workflows. The same package keeps the [Model Context Protocol](https://modelcontextprotocol.io) surface available through `immichctrl mcp` and the back-compat `immich-mcp` binary, so MCP clients like Claude Desktop, Claude Code, OpenClaw, or Codex CLI can browse and search your photo library, manage albums and tags, recognize people, surface memories, and resolve duplicates in plain language.
